@@ -23,7 +23,8 @@
       online_nova_src_a:      { en: 'Source A', ru: 'Источник A' },
       online_nova_season:     { en: 'Season', ru: 'Сезон' },
       online_nova_episode:    { en: 'Episode', ru: 'Серия' },
-      online_nova_tizen_fix:  { en: 'Tizen: fix manifest (slower, use if silent)', ru: 'Tizen: исправить манифест (медленнее, если нет звука)' }
+      online_nova_worker:     { en: 'Relay URL (leave empty to disable)', ru: 'URL релея (пусто — выключено)' },
+      online_nova_worker_ph:  { en: 'https://your-worker.workers.dev', ru: 'https://your-worker.workers.dev' }
     });
   }
 
@@ -31,7 +32,7 @@
     if (Lampa.Params && Lampa.Params.trigger) {
       Lampa.Params.trigger('online_nova_a', true);
       Lampa.Params.trigger('online_nova_debug', false);
-      Lampa.Params.trigger('online_nova_tizen_fix', false);
+      Lampa.Params.select('online_nova_worker', '', '');
     }
   }
 
@@ -176,75 +177,20 @@
     var total = (enabled.a?1:0);
     var done = 0, added = 0;
 
-    var manifestCache = {};
-
     scroll.body().addClass('torrent-list');
 
     function active() { return self._token === runToken; }
 
-    function absolutize(url, base) {
-      if (!url) return url;
-      if (url.indexOf('http://') === 0 || url.indexOf('https://') === 0) return url;
-      if (url.charAt(0) === '/') {
-        var origin = base.match(/^https?:\/\/[^\/]+/);
-        return (origin ? origin[0] : '') + url;
-      }
-      var parts = base.split('/'); parts.pop();
-      return parts.join('/') + '/' + url;
+    function workerUrl() {
+      var w = (Lampa.Storage.field('online_nova_worker') || '') + '';
+      w = w.replace(/\/+$/, '');
+      return w;
     }
 
-    function rewriteManifest(text, base) {
-      var lines = text.split('\n');
-      var media = [], variants = [], extras = [];
-      var i;
-      for (i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (!line) continue;
-        if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
-          var next = (lines[i + 1] || '').trim();
-          var m = line.match(/RESOLUTION=(\d+)x(\d+)/);
-          variants.push({ info: line, url: next, h: m ? parseInt(m[2], 10) : 0 });
-          i++;
-        } else if (line.indexOf('#EXT-X-MEDIA') === 0) {
-          var fixed = line.replace(/URI="([^"]+)"/g, function (_, u) {
-            return 'URI="' + absolutize(u, base) + '"';
-          });
-          media.push(fixed);
-        } else {
-          extras.push(line);
-        }
-      }
-      if (variants.length) {
-        var sd = variants.filter(function (v) { return v.h >= 480; });
-        if (!sd.length) sd = variants;
-        sd.sort(function (a, b) { return b.h - a.h; });
-        var out = ['#EXTM3U'];
-        media.forEach(function (l) { out.push(l); });
-        sd.forEach(function (v) {
-          out.push(v.info);
-          out.push(absolutize(v.url, base));
-        });
-        return out.join('\n');
-      }
-      return extras.map(function (l) {
-        if (l.charAt(0) === '#') return l;
-        return absolutize(l, base);
-      }).join('\n');
-    }
-
-    function fixForTizen(url, cb) {
-      if (manifestCache[url]) return cb(manifestCache[url]);
-      network.clear(); network.timeout(15000);
-      network["native"](url, function (text) {
-        if (!text || typeof text !== 'string') return cb(url);
-        try {
-          var rewritten = rewriteManifest(text, url);
-          var blob = new Blob([rewritten], { type: 'application/x-mpegURL' });
-          var objUrl = URL.createObjectURL(blob);
-          manifestCache[url] = objUrl;
-          cb(objUrl);
-        } catch (e) { cb(url); }
-      }, function () { cb(url); }, false, { dataType: 'text' });
+    function wrap(url) {
+      var w = workerUrl();
+      if (!w) return url;
+      return w + '/stream.m3u8?url=' + encodeURIComponent(url);
     }
 
     function addStream(name, url, subs) {
@@ -438,19 +384,10 @@
                 .filter(function (s) { return s && s.url; })
                 .map(function (s, k) { return { label: s.label || s.lang || ('Sub ' + (k + 1)), url: s.url }; });
               if (playlist && playlist.indexOf('.m3u8') !== -1) {
-                var wantFix = isTizen && Lampa.Storage.field('online_nova_tizen_fix') === true;
-                if (wantFix) {
-                  dbg('a: ok (tizen-fix)', isTv ? ('S' + season + 'E' + episode) : '');
-                  fixForTizen(playlist, function (fixed) {
-                    if (token !== runToken) return;
-                    addStream(nm, fixed, subs);
-                    sourceDone();
-                  });
-                } else {
-                  dbg('a: ok', isTizen ? '(tizen-raw)' : '', isTv ? ('S' + season + 'E' + episode) : '');
-                  addStream(nm, playlist, subs);
-                  sourceDone();
-                }
+                var finalUrl = wrap(playlist);
+                dbg('a: ok', workerUrl() ? '(relay)' : '(direct)', isTv ? ('S' + season + 'E' + episode) : '');
+                addStream(nm, finalUrl, subs);
+                sourceDone();
                 return;
               }
             } catch (e) { dbg('a: decrypt fail', e && e.message); }
@@ -545,8 +482,8 @@
         '<div class="settings-param selector" data-name="online_nova_a" data-type="toggle">' +
           '<div class="settings-param__name">#{online_nova_src_a}</div><div class="settings-param__value"></div>' +
         '</div>' +
-        '<div class="settings-param selector" data-name="online_nova_tizen_fix" data-type="toggle">' +
-          '<div class="settings-param__name">#{online_nova_tizen_fix}</div><div class="settings-param__value"></div>' +
+        '<div class="settings-param selector" data-name="online_nova_worker" data-type="input" placeholder="#{online_nova_worker_ph}">' +
+          '<div class="settings-param__name">#{online_nova_worker}</div><div class="settings-param__value"></div>' +
         '</div>' +
         '<div class="settings-param selector" data-name="online_nova_debug" data-type="toggle">' +
           '<div class="settings-param__name">#{online_nova_debug}</div><div class="settings-param__value"></div>' +
