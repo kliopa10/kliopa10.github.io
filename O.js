@@ -14,15 +14,16 @@
 
   function initLang() {
     Lampa.Lang.add({
-      online_nova_title:     { en: 'Nova' },
-      online_nova_settings:  { en: 'Nova' },
-      online_nova_subtitle:  { en: 'Instant streams' },
-      online_nova_empty:     { en: 'No available sources' },
-      online_nova_noresults: { en: 'No results for this title' },
-      online_nova_debug:     { en: 'Show debug messages' },
-      online_nova_src_a:     { en: 'Source A' },
-      online_nova_season:    { en: 'Season' },
-      online_nova_episode:   { en: 'Episode' }
+      online_nova_title:      { en: 'Nova', ru: 'Nova' },
+      online_nova_settings:   { en: 'Nova', ru: 'Nova' },
+      online_nova_subtitle:   { en: 'Instant streams', ru: 'Мгновенный стриминг' },
+      online_nova_empty:      { en: 'No available sources', ru: 'Нет доступных источников' },
+      online_nova_noresults:  { en: 'No results for this title', ru: 'Нет результатов по этому тайтлу' },
+      online_nova_debug:      { en: 'Show debug messages', ru: 'Показывать отладочные сообщения' },
+      online_nova_src_a:      { en: 'Source A', ru: 'Источник A' },
+      online_nova_season:     { en: 'Season', ru: 'Сезон' },
+      online_nova_episode:    { en: 'Episode', ru: 'Серия' },
+      online_nova_tizen_fix:  { en: 'Tizen: fix manifest (slower, use if silent)', ru: 'Tizen: исправить манифест (медленнее, если нет звука)' }
     });
   }
 
@@ -30,6 +31,7 @@
     if (Lampa.Params && Lampa.Params.trigger) {
       Lampa.Params.trigger('online_nova_a', true);
       Lampa.Params.trigger('online_nova_debug', false);
+      Lampa.Params.trigger('online_nova_tizen_fix', false);
     }
   }
 
@@ -174,6 +176,8 @@
     var total = (enabled.a?1:0);
     var done = 0, added = 0;
 
+    var manifestCache = {};
+
     scroll.body().addClass('torrent-list');
 
     function active() { return self._token === runToken; }
@@ -229,13 +233,16 @@
     }
 
     function fixForTizen(url, cb) {
+      if (manifestCache[url]) return cb(manifestCache[url]);
       network.clear(); network.timeout(15000);
       network["native"](url, function (text) {
         if (!text || typeof text !== 'string') return cb(url);
         try {
           var rewritten = rewriteManifest(text, url);
           var blob = new Blob([rewritten], { type: 'application/x-mpegURL' });
-          cb(URL.createObjectURL(blob));
+          var objUrl = URL.createObjectURL(blob);
+          manifestCache[url] = objUrl;
+          cb(objUrl);
         } catch (e) { cb(url); }
       }, function () { cb(url); }, false, { dataType: 'text' });
     }
@@ -431,15 +438,16 @@
                 .filter(function (s) { return s && s.url; })
                 .map(function (s, k) { return { label: s.label || s.lang || ('Sub ' + (k + 1)), url: s.url }; });
               if (playlist && playlist.indexOf('.m3u8') !== -1) {
-                if (isTizen) {
-                  dbg('a: ok (tizen-rewrite)', isTv ? ('S' + season + 'E' + episode) : '');
+                var wantFix = isTizen && Lampa.Storage.field('online_nova_tizen_fix') === true;
+                if (wantFix) {
+                  dbg('a: ok (tizen-fix)', isTv ? ('S' + season + 'E' + episode) : '');
                   fixForTizen(playlist, function (fixed) {
                     if (token !== runToken) return;
                     addStream(nm, fixed, subs);
                     sourceDone();
                   });
                 } else {
-                  dbg('a: ok', isTv ? ('S' + season + 'E' + episode) : '');
+                  dbg('a: ok', isTizen ? '(tizen-raw)' : '', isTv ? ('S' + season + 'E' + episode) : '');
                   addStream(nm, playlist, subs);
                   sourceDone();
                 }
@@ -536,6 +544,9 @@
       '<div>' +
         '<div class="settings-param selector" data-name="online_nova_a" data-type="toggle">' +
           '<div class="settings-param__name">#{online_nova_src_a}</div><div class="settings-param__value"></div>' +
+        '</div>' +
+        '<div class="settings-param selector" data-name="online_nova_tizen_fix" data-type="toggle">' +
+          '<div class="settings-param__name">#{online_nova_tizen_fix}</div><div class="settings-param__value"></div>' +
         '</div>' +
         '<div class="settings-param selector" data-name="online_nova_debug" data-type="toggle">' +
           '<div class="settings-param__name">#{online_nova_debug}</div><div class="settings-param__value"></div>' +
