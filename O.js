@@ -1,40 +1,33 @@
 (function () {
   'use strict';
 
-  var V = '1.0.3';
+  var PLUGIN_VERSION = '1.0.1';
 
   function _d(s) { try { return atob(s); } catch (e) { return ''; } }
 
   var U = {
-    a: _d('aHR0cHM6Ly9hcGkuc3BlZWRyYWNlbGlnaHQuY29t'),
-    b: _d('aHR0cHM6Ly9zdHJlYW1kYXRhLnZhcGxheWVyLnJ1L2FwaS5waHA='),
-    c: _d('aHR0cHM6Ly92aXhzcmMudG8='),
-    r: _d('aHR0cHM6Ly9jb3JzLm5iNTU3LndvcmtlcnMuZGV2Lw=='),
-    t: _d('aHR0cHM6Ly9hcGkudGhlbW92aWVkYi5vcmcvMy8='),
-    po: _d('aHR0cHM6Ly9uZXh0Z2VuY2xvdWRmYWJyaWMuY29t')
+    videasy:   _d('aHR0cHM6Ly9hcGkuc3BlZWRyYWNlbGlnaHQuY29t'),
+    vaplayer:  _d('aHR0cHM6Ly9zdHJlYW1kYXRhLnZhcGxheWVyLnJ1L2FwaS5waHA='),
+    vixsrc:    _d('aHR0cHM6Ly92aXhzcmMudG8='),
+    relay:     _d('aHR0cHM6Ly9jb3JzLm5iNTU3LndvcmtlcnMuZGV2Lw=='),
+    tmdb:      _d('aHR0cHM6Ly9hcGkudGhlbW92aWVkYi5vcmcvMy8=')
   };
   var P = {
-    a: _d('L3NlZWQ/bWVkaWFJZD0='),
-    b: _d('L2Nkbi9zb3VyY2VzLXdpdGgtdGl0bGU='),
-    c: _d('L2xhbW92aWUvc291cmNlcy13aXRoLXRpdGxl'),
-    d: _d('L2FwaS90di8='),
-    e: _d('L2FwaS9tb3ZpZS8=')
+    seed:     _d('L3NlZWQ/bWVkaWFJZD0='),
+    cdn:      _d('L2Nkbi9zb3VyY2VzLXdpdGgtdGl0bGU='),
+    lamovie:  _d('L2xhbW92aWUvc291cmNlcy13aXRoLXRpdGxl'),
+    apiTv:    _d('L2FwaS90di8='),
+    apiMovie: _d('L2FwaS9tb3ZpZS8=')
   };
-  var K = _d('NGVmMGQ3MzU1ZDlmZmI1MTUxZTk4Nzc2NDcwOGNlOTY=');
-
-  var VA_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  var TMDB_KEY = _d('NGVmMGQ3MzU1ZDlmZmI1MTUxZTk4Nzc2NDcwOGNlOTY=');
 
   function relay(url) {
     if (!url) return url;
-    var posEnd = url.lastIndexOf('?');
-    var posStart = url.lastIndexOf('://');
-    if (posEnd === -1 || posEnd <= posStart) posEnd = url.length;
-    if (posStart === -1) posStart = -3;
-    var name = url.substring(posStart + 3, posEnd);
-    var slash = name.lastIndexOf('/');
-    name = slash !== -1 ? name.substring(slash + 1) : '';
-    name = name.replace(/\.(php|asp|aspx|jsp|jspx|cgi|pl|py|rb|env|ini|conf|config|htaccess|htpasswd|git|yml|yaml|sql)$/, '.txt');
-    return U.r + 'enc2/' + encodeURIComponent(btoa(url)) + '/' + name + '?jacred.test';
+    var pos = url.indexOf('/');
+    if (pos !== -1 && url.charAt(pos + 1) === '/') pos++;
+    var part1 = pos !== -1 ? url.substring(0, pos + 1) : '';
+    var part2 = pos !== -1 ? url.substring(pos + 1) : url;
+    return U.relay + 'enc/' + encodeURIComponent(btoa(part1)) + '/' + part2;
   }
 
   if (typeof window === 'undefined' || typeof Lampa === 'undefined') return;
@@ -47,27 +40,25 @@
       online_3src_noresults: { en: 'No results for this title' },
       online_3src_season:    { en: 'Default season' },
       online_3src_episode:   { en: 'Default episode' },
-      online_3src_debug:     { en: 'Show debug messages' },
-      online_3src_src_a:     { en: 'Source A' },
-      online_3src_src_b:     { en: 'Source B' },
-      online_3src_src_c:     { en: 'Source C' }
+      online_3src_nolink:    { en: 'Failed to fetch link' },
+      online_3src_debug:     { en: 'Show debug messages' }
     });
   }
 
   function initStorage() {
     if (Lampa.Params && Lampa.Params.trigger) {
-      Lampa.Params.trigger('online_3src_a', true);
-      Lampa.Params.trigger('online_3src_b', true);
-      Lampa.Params.trigger('online_3src_c', true);
-      Lampa.Params.trigger('online_3src_debug', false);
-      Lampa.Params.select('online_3src_season', '', '');
+      Lampa.Params.trigger('online_3src_videasy',  true);
+      Lampa.Params.trigger('online_3src_vaplayer', true);
+      Lampa.Params.trigger('online_3src_vixsrc',   true);
+      Lampa.Params.trigger('online_3src_debug',    false);
+      Lampa.Params.select('online_3src_season',  '', '');
       Lampa.Params.select('online_3src_episode', '', '');
     }
   }
 
   function dbg() {
     if (Lampa.Storage.field('online_3src_debug') === true && window.console) {
-      try { console.log.apply(console, ['[3src]'].concat([].slice.call(arguments))); } catch (e) {}
+      try { console.log.apply(console, ['[online_3src]'].concat([].slice.call(arguments))); } catch (e) {}
     }
   }
 
@@ -151,7 +142,7 @@
     if (movie.imdb_id) return cb(movie.imdb_id);
     if (movie.source !== 'tmdb' && movie.source !== 'cub') return cb(null);
     var kind = (movie.name || movie.first_air_date) ? 'tv' : 'movie';
-    var url = U.t + kind + '/' + movie.id + '/external_ids?api_key=' + K + '&language=en';
+    var url = U.tmdb + kind + '/' + movie.id + '/external_ids?api_key=' + TMDB_KEY + '&language=en';
     var net = new Lampa.Reguest();
     net.timeout(8000);
     net.silent(url, function (j) {
@@ -177,11 +168,11 @@
     if (isNaN(episode) || episode < 1) episode = 1;
 
     var enabled = {
-      a: Lampa.Storage.field('online_3src_a') === true,
-      b: Lampa.Storage.field('online_3src_b') === true,
-      c: Lampa.Storage.field('online_3src_c') === true
+      videasy:  Lampa.Storage.field('online_3src_videasy')  === true,
+      vaplayer: Lampa.Storage.field('online_3src_vaplayer') === true,
+      vixsrc:   Lampa.Storage.field('online_3src_vixsrc')   === true
     };
-    var total = (enabled.a?1:0) + (enabled.b?1:0) + (enabled.c?1:0);
+    var total = (enabled.videasy?1:0) + (enabled.vaplayer?1:0) + (enabled.vixsrc?1:0);
     var done = 0, added = 0;
 
     scroll.body().addClass('torrent-list');
@@ -228,24 +219,24 @@
       }
     }
 
-    function runA() {
-      if (!enabled.a) return sourceDone();
+    function srcVideasy() {
+      if (!enabled.videasy) return sourceDone();
       var tmdb = movie.id;
       var imdb = movie.imdb_id || '';
       var year = String(movie.release_date || movie.first_air_date || '').slice(0, 4);
-      if (!tmdb) { dbg('a: no id'); return sourceDone(); }
+      if (!tmdb) { dbg('videasy: no tmdb id'); return sourceDone(); }
 
       network.clear(); network.timeout(15000);
-      network["native"](U.a + P.a + tmdb, function (sd) {
+      network.silent(U.videasy + P.seed + tmdb, function (sd) {
         var seed = sd && sd.seed;
-        if (!seed) { dbg('a: no seed'); return sourceDone(); }
+        if (!seed) { dbg('videasy: no seed'); return sourceDone(); }
         var servers = [
-          [Lampa.Lang.translate('online_3src_src_a'),      U.a + P.b],
-          [Lampa.Lang.translate('online_3src_src_a') + ' 2', U.a + P.c]
+          ['Videasy CDN',     U.videasy + P.cdn],
+          ['Videasy LaMovie', U.videasy + P.lamovie]
         ];
         var i = 0;
         (function next() {
-          if (i >= servers.length) { dbg('a: no stream'); return sourceDone(); }
+          if (i >= servers.length) { dbg('videasy: no stream from any server'); return sourceDone(); }
           var nm = servers[i][0], base = servers[i][1]; i++;
           var url = base
             + '?title='     + encodeURIComponent(title)
@@ -267,111 +258,66 @@
                 .filter(function (s) { return s && s.url; })
                 .map(function (s, k) { return { label: s.label || s.lang || ('Sub ' + (k + 1)), url: s.url }; });
               if (playlist && playlist.indexOf('.m3u8') !== -1) {
-                dbg('a: ok');
+                dbg('videasy: ok -', nm);
                 addStream(nm, playlist, subs);
                 return sourceDone();
               }
-            } catch (e) { dbg('a: decrypt fail', e && e.message); }
+            } catch (e) { dbg('videasy: decrypt failed', e && e.message); }
             next();
-          }, function (a) { dbg('a: http', a && a.status); next(); }, false, { dataType: 'text' });
+          }, function (a) { dbg('videasy: http error', a && a.status); next(); }, false, { dataType: 'text' });
         })();
-      }, function (a) { dbg('a: seed fail', a && a.status); sourceDone(); });
+      }, function (a) { dbg('videasy: seed request failed', a && a.status); sourceDone(); });
     }
 
-    function runB() {
-      if (!enabled.b) return sourceDone();
+    function srcVAPlayer() {
+      if (!enabled.vaplayer) return sourceDone();
       fetchImdbId(movie, function (imdb) {
-        if (!imdb) { dbg('b: no imdb'); return sourceDone(); }
+        if (!imdb) { dbg('vaplayer: no imdb id available'); return sourceDone(); }
         var q = 'imdb=' + encodeURIComponent(imdb) + '&type=' + (isTv ? 'tv' : 'movie');
         if (isTv) q += '&season=' + season + '&episode=' + episode;
-        var url = U.b + '?' + q;
-
-        var referer = isTv
-          ? U.po + '/embed/tv/'    + imdb + '/' + season + '/' + episode
-          : U.po + '/embed/movie/' + imdb;
-
-        var opts = {
-          headers: {
-            'User-Agent': VA_UA,
-            'Referer':    referer,
-            'Origin':     U.po
-          }
-        };
+        var url = U.vaplayer + '?' + q;
 
         network.clear(); network.timeout(15000);
-        network["native"](url, function (json) {
-          handleB(json, 'direct');
-        }, function (a1) {
-          dbg('b: direct failed', a1 && a1.status, '- trying relay');
-          network.clear(); network.timeout(15000);
-          network["native"](relay(url), function (json) {
-            handleB(json, 'relay');
-          }, function (a2) {
-            dbg('b: fail', 'direct', a1 && a1.status, 'relay', a2 && a2.status);
-            sourceDone();
-          }, false, opts);
-        }, false, opts);
+        network.silent(relay(url), function (json) {
+          var urls = json && json.data ? json.data.stream_urls : null;
+          if (!(Array.isArray(urls) && urls.length)) { dbg('vaplayer: no stream_urls in response'); return sourceDone(); }
+          var subs = (Array.isArray(json.default_subs) ? json.default_subs : [])
+            .map(function (s, k) {
+              return { label: s.label || s.language || s.lang || ('Sub ' + (k + 1)), url: s.url || s.src || s };
+            })
+            .filter(function (s) { return s.url; });
+          dbg('vaplayer: ok');
+          addStream('VAPlayer', urls[0], subs);
+          sourceDone();
+        }, function (a) { dbg('vaplayer: relay request failed', a && a.status); sourceDone(); });
       });
-
-      function handleB(json, how) {
-        if (!json) { dbg('b: no response', how); return sourceDone(); }
-        if (json.status_code !== '200' && json.status_code !== 200) {
-          dbg('b: status_code', json.status_code, json.error || '');
-          return sourceDone();
-        }
-        var urls = json && json.data ? json.data.stream_urls : null;
-        if (!(Array.isArray(urls) && urls.length)) { dbg('b: no streams', how); return sourceDone(); }
-        var subs = (Array.isArray(json.default_subs) ? json.default_subs : [])
-          .map(function (s, k) {
-            return { label: s.label || s.language || s.lang || ('Sub ' + (k + 1)), url: s.url || s.src || s };
-          })
-          .filter(function (s) { return s.url; });
-        dbg('b: ok via', how);
-        addStream(Lampa.Lang.translate('online_3src_src_b'), urls[0], subs);
-        sourceDone();
-      }
     }
 
-    function runC() {
-      if (!enabled.c) return sourceDone();
+    function srcVixSrc() {
+      if (!enabled.vixsrc) return sourceDone();
       var tmdb = movie.id;
-      if (!tmdb) { dbg('c: no id'); return sourceDone(); }
+      if (!tmdb) { dbg('vixsrc: no tmdb id'); return sourceDone(); }
       var api = isTv
-        ? U.c + P.d + tmdb + '/' + season + '/' + episode
-        : U.c + P.e + tmdb;
+        ? U.vixsrc + P.apiTv    + tmdb + '/' + season + '/' + episode
+        : U.vixsrc + P.apiMovie + tmdb;
 
-      var settled = false;
-      function done(r, how, err) {
-        if (settled) return; settled = true;
-        if (!r) { dbg('c: fail', how, err && err.status); return sourceDone(); }
-        if (!r.src) { dbg('c: no src'); return sourceDone(); }
+      network.clear(); network.timeout(15000);
+      network.silent(relay(api), function (d) {
+        if (!d || !d.src) { dbg('vixsrc: no embed src'); return sourceDone(); }
+        var htmlUrl = relay(U.vixsrc + d.src);
         network.clear(); network.timeout(15000);
-        network["native"](U.c + r.src, function (html) {
-          if (!html) { dbg('c: html fail'); return sourceDone(); }
+        network["native"](htmlUrl, function (html) {
           function pick(re) { var m = html.match(re); return m ? m[1] : null; }
           var token    = pick(/token["']\s*:\s*["']([^"']+)/);
           var expires  = pick(/expires["']\s*:\s*["']([^"']+)/);
           var playlist = pick(/url\s*:\s*["']([^"']+)/);
-          if (!(token && expires && playlist)) { dbg('c: parse fail'); return sourceDone(); }
+          if (!(token && expires && playlist)) { dbg('vixsrc: embed parse failed'); return sourceDone(); }
           var sep = playlist.indexOf('?') !== -1 ? '&' : '?';
-          dbg('c: ok via', how);
-          addStream(Lampa.Lang.translate('online_3src_src_c'), playlist + sep + 'token=' + token + '&expires=' + expires + '&h=1', null);
+          dbg('vixsrc: ok');
+          addStream('VixSrc', playlist + sep + 'token=' + token + '&expires=' + expires + '&h=1', null);
           sourceDone();
-        }, function () { dbg('c: html http fail'); sourceDone(); }, false, { dataType: 'text' });
-      }
-
-      network.clear(); network.timeout(15000);
-      network["native"](api, function (d) {
-        done(d, 'direct');
-      }, function () {
-        dbg('c: direct failed - trying relay');
-        network.clear(); network.timeout(15000);
-        network["native"](relay(api), function (d) {
-          done(d, 'relay');
-        }, function (a) {
-          done(null, 'fail', a);
-        });
-      });
+        }, function (a) { dbg('vixsrc: embed fetch failed', a && a.status); sourceDone(); }, false, { dataType: 'text' });
+      }, function (a) { dbg('vixsrc: api request failed', a && a.status); sourceDone(); });
     }
 
     this.create = function () {
@@ -385,9 +331,9 @@
         scroll.append(empty);
         if (self.activity) self.activity.loader(false);
       } else {
-        runA();
-        runB();
-        runC();
+        srcVideasy();
+        srcVAPlayer();
+        srcVixSrc();
       }
       return this.render();
     };
@@ -455,14 +401,14 @@
   function initSettings() {
     Lampa.Template.add('settings_online_3src',
       '<div>' +
-        '<div class="settings-param selector" data-name="online_3src_a" data-type="toggle">' +
-          '<div class="settings-param__name">#{online_3src_src_a}</div><div class="settings-param__value"></div>' +
+        '<div class="settings-param selector" data-name="online_3src_videasy"  data-type="toggle">' +
+          '<div class="settings-param__name">Videasy</div><div class="settings-param__value"></div>' +
         '</div>' +
-        '<div class="settings-param selector" data-name="online_3src_b" data-type="toggle">' +
-          '<div class="settings-param__name">#{online_3src_src_b}</div><div class="settings-param__value"></div>' +
+        '<div class="settings-param selector" data-name="online_3src_vaplayer" data-type="toggle">' +
+          '<div class="settings-param__name">VAPlayer</div><div class="settings-param__value"></div>' +
         '</div>' +
-        '<div class="settings-param selector" data-name="online_3src_c" data-type="toggle">' +
-          '<div class="settings-param__name">#{online_3src_src_c}</div><div class="settings-param__value"></div>' +
+        '<div class="settings-param selector" data-name="online_3src_vixsrc"   data-type="toggle">' +
+          '<div class="settings-param__name">VixSrc</div><div class="settings-param__value"></div>' +
         '</div>' +
         '<div class="settings-param selector" data-name="online_3src_season"  data-type="input" placeholder="1">' +
           '<div class="settings-param__name">#{online_3src_season}</div><div class="settings-param__value"></div>' +
@@ -470,7 +416,7 @@
         '<div class="settings-param selector" data-name="online_3src_episode" data-type="input" placeholder="1">' +
           '<div class="settings-param__name">#{online_3src_episode}</div><div class="settings-param__value"></div>' +
         '</div>' +
-        '<div class="settings-param selector" data-name="online_3src_debug" data-type="toggle">' +
+        '<div class="settings-param selector" data-name="online_3src_debug"   data-type="toggle">' +
           '<div class="settings-param__name">#{online_3src_debug}</div><div class="settings-param__value"></div>' +
         '</div>' +
       '</div>');
