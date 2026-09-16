@@ -3,9 +3,7 @@
 
   function _d(s) { try { return atob(s); } catch (e) { return ''; } }
 
-  var U = {
-    VE: _d('aHR0cHM6Ly9hcGkuc3BlZWRyYWNlbGlnaHQuY29t')
-  };
+  var U = { VE: _d('aHR0cHM6Ly9hcGkuc3BlZWRyYWNlbGlnaHQuY29t') };
   var P = {
     seed:    _d('L3NlZWQ/bWVkaWFJZD0='),
     cdn:     _d('L2Nkbi9zb3VyY2VzLXdpdGgtdGl0bGU='),
@@ -64,9 +62,7 @@
     Lampa.Template.add('online_nova_item',
       '<div class="online selector">' +
         '<div class="online__body">' +
-          '<div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">' +
-            SVG_PLAY +
-          '</div>' +
+          '<div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">' + SVG_PLAY + '</div>' +
           '<div class="online__title" style="padding-left:2.1em">{title}</div>' +
           '<div class="online__quality" style="padding-left:3.4em">{quality}{info}</div>' +
         '</div>' +
@@ -174,17 +170,13 @@
 
     var runToken = 0;
 
-    var enabled = {
-      a: Lampa.Storage.field('online_nova_a') === true
-    };
+    var enabled = { a: Lampa.Storage.field('online_nova_a') === true };
     var total = (enabled.a?1:0);
     var done = 0, added = 0;
 
     scroll.body().addClass('torrent-list');
 
-    function active() {
-      return self._token === runToken;
-    }
+    function active() { return self._token === runToken; }
 
     function absolutize(url, base) {
       if (!url) return url;
@@ -199,28 +191,40 @@
 
     function rewriteManifest(text, base) {
       var lines = text.split('\n');
-      var variants = [];
-      for (var i = 0; i < lines.length; i++) {
+      var media = [], variants = [], extras = [];
+      var i;
+      for (i = 0; i < lines.length; i++) {
         var line = lines[i].trim();
+        if (!line) continue;
         if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
           var next = (lines[i + 1] || '').trim();
           var m = line.match(/RESOLUTION=(\d+)x(\d+)/);
           variants.push({ info: line, url: next, h: m ? parseInt(m[2], 10) : 0 });
           i++;
+        } else if (line.indexOf('#EXT-X-MEDIA') === 0) {
+          var fixed = line.replace(/URI="([^"]+)"/g, function (_, u) {
+            return 'URI="' + absolutize(u, base) + '"';
+          });
+          media.push(fixed);
+        } else {
+          extras.push(line);
         }
       }
       if (variants.length) {
-        var hd = variants.filter(function (v) { return v.h >= 720; });
-        if (!hd.length) hd = variants;
-        hd.sort(function (a, b) { return b.h - a.h; });
+        var sd = variants.filter(function (v) { return v.h >= 480; });
+        if (!sd.length) sd = variants;
+        sd.sort(function (a, b) { return b.h - a.h; });
         var out = ['#EXTM3U'];
-        hd.forEach(function (v) { out.push(v.info); out.push(absolutize(v.url, base)); });
+        media.forEach(function (l) { out.push(l); });
+        sd.forEach(function (v) {
+          out.push(v.info);
+          out.push(absolutize(v.url, base));
+        });
         return out.join('\n');
       }
-      return lines.map(function (l) {
-        var t = l.trim();
-        if (!t || t.charAt(0) === '#') return l;
-        return absolutize(t, base);
+      return extras.map(function (l) {
+        if (l.charAt(0) === '#') return l;
+        return absolutize(l, base);
       }).join('\n');
     }
 
@@ -291,12 +295,8 @@
       if (tmdb && tmdb.get) {
         tmdb.get('tv/' + movie.id + '/season/' + s, {}, function (data) {
           cb((data && data.episodes) || []);
-        }, function () {
-          cb([]);
-        });
-      } else {
-        cb([]);
-      }
+        }, function () { cb([]); });
+      } else cb([]);
     }
 
     function refresh() {
@@ -504,7 +504,7 @@
     resetTemplates();
     Lampa.Component.add('online_nova', component);
 
-    var button = '<div class="full-start__button selector view--online_nova" data-subtitle="online_nova">' +
+    var button = '<div class="full-start__button selector view--online_nova">' +
       '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 244 260" style="enable-background:new 0 0 512 512">' +
         '<path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z" fill="currentColor"/>' +
       '</svg><span>#{online_nova_title}</span></div>';
@@ -548,14 +548,15 @@
       if (!body || !body.length) return;
       if (body.find('[data-component="online_nova"]').length) return;
 
-      var field = $('<div class="settings-folder selector" data-component="online_nova">' +
-        '<div class="settings-folder__icon">' +
-          '<svg height="260" viewBox="0 0 244 260" fill="none">' +
-            '<path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z" fill="white"/>' +
-          '</svg>' +
-        '</div>' +
-        '<div class="settings-folder__name">' + Lampa.Lang.translate('online_nova_settings') + '</div>' +
-      '</div>');
+      var field = $(Lampa.Lang.translate(
+        '<div class="settings-folder selector" data-component="online_nova">' +
+          '<div class="settings-folder__icon">' +
+            '<svg height="260" viewBox="0 0 244 260" fill="none">' +
+              '<path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z" fill="white"/>' +
+            '</svg>' +
+          '</div>' +
+          '<div class="settings-folder__name">#{online_nova_settings}</div>' +
+        '</div>'));
 
       var anchor = body.find('[data-component="more"]');
       if (anchor.length) anchor.after(field);
