@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var V = '1.0.2';
+  var V = '1.0.3';
 
   function _d(s) { try { return atob(s); } catch (e) { return ''; } }
 
@@ -10,7 +10,8 @@
     b: _d('aHR0cHM6Ly9zdHJlYW1kYXRhLnZhcGxheWVyLnJ1L2FwaS5waHA='),
     c: _d('aHR0cHM6Ly92aXhzcmMudG8='),
     r: _d('aHR0cHM6Ly9jb3JzLm5iNTU3LndvcmtlcnMuZGV2Lw=='),
-    t: _d('aHR0cHM6Ly9hcGkudGhlbW92aWVkYi5vcmcvMy8=')
+    t: _d('aHR0cHM6Ly9hcGkudGhlbW92aWVkYi5vcmcvMy8='),
+    po: _d('aHR0cHM6Ly9uZXh0Z2VuY2xvdWRmYWJyaWMuY29t')
   };
   var P = {
     a: _d('L3NlZWQ/bWVkaWFJZD0='),
@@ -20,6 +21,8 @@
     e: _d('L2FwaS9tb3ZpZS8=')
   };
   var K = _d('NGVmMGQ3MzU1ZDlmZmI1MTUxZTk4Nzc2NDcwOGNlOTY=');
+
+  var VA_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
   function relay(url) {
     if (!url) return url;
@@ -225,24 +228,6 @@
       }
     }
 
-    function get(url, cb, isText) {
-      var opts = isText ? { dataType: 'text' } : false;
-      var settled = false;
-      function done(r, how, err) {
-        if (settled) return; settled = true;
-        cb(r, how, err);
-      }
-      network.clear(); network.timeout(15000);
-      network["native"](url, function (r) { done(r, 'direct'); }, function (a1) {
-        dbg('direct failed', a1 && a1.status, '- trying relay');
-        var ru = relay(url);
-        network.clear(); network.timeout(15000);
-        network["native"](ru, function (r) { done(r, 'relay'); }, function (a2) {
-          done(null, 'fail', a2 || a1);
-        }, false, opts);
-      }, false, opts);
-    }
-
     function runA() {
       if (!enabled.a) return sourceDone();
       var tmdb = movie.id;
@@ -301,20 +286,50 @@
         if (isTv) q += '&season=' + season + '&episode=' + episode;
         var url = U.b + '?' + q;
 
-        get(url, function (json, how, err) {
-          if (!json) { dbg('b: fail', how, err && err.status); return sourceDone(); }
-          var urls = json && json.data ? json.data.stream_urls : null;
-          if (!(Array.isArray(urls) && urls.length)) { dbg('b: no streams', how); return sourceDone(); }
-          var subs = (Array.isArray(json.default_subs) ? json.default_subs : [])
-            .map(function (s, k) {
-              return { label: s.label || s.language || s.lang || ('Sub ' + (k + 1)), url: s.url || s.src || s };
-            })
-            .filter(function (s) { return s.url; });
-          dbg('b: ok via', how);
-          addStream(Lampa.Lang.translate('online_3src_src_b'), urls[0], subs);
-          sourceDone();
-        });
+        var referer = isTv
+          ? U.po + '/embed/tv/'    + imdb + '/' + season + '/' + episode
+          : U.po + '/embed/movie/' + imdb;
+
+        var opts = {
+          headers: {
+            'User-Agent': VA_UA,
+            'Referer':    referer,
+            'Origin':     U.po
+          }
+        };
+
+        network.clear(); network.timeout(15000);
+        network["native"](url, function (json) {
+          handleB(json, 'direct');
+        }, function (a1) {
+          dbg('b: direct failed', a1 && a1.status, '- trying relay');
+          network.clear(); network.timeout(15000);
+          network["native"](relay(url), function (json) {
+            handleB(json, 'relay');
+          }, function (a2) {
+            dbg('b: fail', 'direct', a1 && a1.status, 'relay', a2 && a2.status);
+            sourceDone();
+          }, false, opts);
+        }, false, opts);
       });
+
+      function handleB(json, how) {
+        if (!json) { dbg('b: no response', how); return sourceDone(); }
+        if (json.status_code !== '200' && json.status_code !== 200) {
+          dbg('b: status_code', json.status_code, json.error || '');
+          return sourceDone();
+        }
+        var urls = json && json.data ? json.data.stream_urls : null;
+        if (!(Array.isArray(urls) && urls.length)) { dbg('b: no streams', how); return sourceDone(); }
+        var subs = (Array.isArray(json.default_subs) ? json.default_subs : [])
+          .map(function (s, k) {
+            return { label: s.label || s.language || s.lang || ('Sub ' + (k + 1)), url: s.url || s.src || s };
+          })
+          .filter(function (s) { return s.url; });
+        dbg('b: ok via', how);
+        addStream(Lampa.Lang.translate('online_3src_src_b'), urls[0], subs);
+        sourceDone();
+      }
     }
 
     function runC() {
@@ -325,20 +340,37 @@
         ? U.c + P.d + tmdb + '/' + season + '/' + episode
         : U.c + P.e + tmdb;
 
-      get(api, function (d, how1, err1) {
-        if (!d || !d.src) { dbg('c: no src', how1, err1 && err1.status); return sourceDone(); }
-        get(U.c + d.src, function (html, how2, err2) {
-          if (!html) { dbg('c: html fail', how2, err2 && err2.status); return sourceDone(); }
+      var settled = false;
+      function done(r, how, err) {
+        if (settled) return; settled = true;
+        if (!r) { dbg('c: fail', how, err && err.status); return sourceDone(); }
+        if (!r.src) { dbg('c: no src'); return sourceDone(); }
+        network.clear(); network.timeout(15000);
+        network["native"](U.c + r.src, function (html) {
+          if (!html) { dbg('c: html fail'); return sourceDone(); }
           function pick(re) { var m = html.match(re); return m ? m[1] : null; }
           var token    = pick(/token["']\s*:\s*["']([^"']+)/);
-          var expires  = pick(/expires["\']\s*:\s*["\']([^"\']+)/);
+          var expires  = pick(/expires["']\s*:\s*["']([^"']+)/);
           var playlist = pick(/url\s*:\s*["']([^"']+)/);
           if (!(token && expires && playlist)) { dbg('c: parse fail'); return sourceDone(); }
           var sep = playlist.indexOf('?') !== -1 ? '&' : '?';
-          dbg('c: ok via', how1, '/', how2);
+          dbg('c: ok via', how);
           addStream(Lampa.Lang.translate('online_3src_src_c'), playlist + sep + 'token=' + token + '&expires=' + expires + '&h=1', null);
           sourceDone();
-        }, true);
+        }, function () { dbg('c: html http fail'); sourceDone(); }, false, { dataType: 'text' });
+      }
+
+      network.clear(); network.timeout(15000);
+      network["native"](api, function (d) {
+        done(d, 'direct');
+      }, function () {
+        dbg('c: direct failed - trying relay');
+        network.clear(); network.timeout(15000);
+        network["native"](relay(api), function (d) {
+          done(d, 'relay');
+        }, function (a) {
+          done(null, 'fail', a);
+        });
       });
     }
 
