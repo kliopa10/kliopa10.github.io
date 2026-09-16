@@ -16,12 +16,14 @@
 
   function initLang() {
     Lampa.Lang.add({
-      online_3src_title:     { en: 'Online (3src)' },
-      online_3src_settings:  { en: 'Online (3src)' },
-      online_3src_empty:     { en: 'No available sources' },
-      online_3src_noresults: { en: 'No results for this title' },
-      online_3src_debug:     { en: 'Show debug messages' },
-      online_3src_src_a:     { en: 'Source A' }
+      online_3src_title:     { en: 'Online (3src)', ru: 'Онлайн (3src)' },
+      online_3src_settings:  { en: 'Online (3src)', ru: 'Онлайн (3src)' },
+      online_3src_empty:     { en: 'No available sources', ru: 'Нет доступных источников' },
+      online_3src_noresults: { en: 'No results for this title', ru: 'Нет результатов по этому тайтлу' },
+      online_3src_debug:     { en: 'Show debug messages', ru: 'Показывать отладочные сообщения' },
+      online_3src_src_a:     { en: 'Source A', ru: 'Источник A' },
+      online_3src_season:    { en: 'Season', ru: 'Сезон' },
+      online_3src_episode:   { en: 'Episode', ru: 'Серия' }
     });
   }
 
@@ -52,9 +54,16 @@
           '<div class="online__quality" style="padding-left:3.4em">{quality}{info}</div>' +
         '</div>' +
       '</div>');
-  }
 
-  var MAGIC = [109, 118, 109, 49];
+    Lampa.Template.add('online_3src_select',
+      '<div class="online selector">' +
+        '<div class="online__body">' +
+          '<div class="online__title" style="padding-left:2.1em;color:#9ED7FF">{label}</div>' +
+          '<div class="online__quality" style="padding-left:3.4em">{value} &#8250;</div>' +
+        '</div>' +
+      '</div>');
+  }
+var MAGIC = [109, 118, 109, 49];
   var HASH_TABLE = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580];
   function u32x(x){return x>>>0}
   function mul32(a,b){return Math.imul(a,b)>>>0}
@@ -113,8 +122,7 @@
     for(var j=0;j<MAGIC.length;j++) if(data[j]!==MAGIC[j]) throw new Error('bad payload');
     return toUtf8(data.subarray(MAGIC.length));
   }
-
-  function component(object) {
+function component(object) {
     var self    = this;
     var network = new Lampa.Reguest();
     var scroll  = new Lampa.Scroll({ mask: true, over: true });
@@ -124,8 +132,14 @@
     var title   = object.search || movie.title || movie.name || '';
     var isTv    = !!(movie.number_of_seasons || movie.first_air_date || movie.name);
 
-    var season  = 1;
-    var episode = 1;
+    // NOTE: do NOT hard-code to 1. Default to the last season (Lampa convention)
+    // and let the user change season/episode via the in-component selector.
+    var lastSE  = movie.last_episode_to_air || {};
+    var season  = parseInt((object.season || movie.number_of_seasons || lastSE.season_number || 1), 10) || 1;
+    var episode = parseInt((object.episode || lastSE.episode_number || 1), 10) || 1;
+
+    // Guards against stale async responses when the user switches S/E mid-request.
+    var runToken = 0;
 
     var enabled = {
       a: Lampa.Storage.field('online_3src_a') === true
@@ -135,7 +149,12 @@
 
     scroll.body().addClass('torrent-list');
 
+    function active() {
+      return self._token === runToken;
+    }
+
     function addStream(name, url, subs) {
+      if (!active()) return;
       added++;
       var hash = Lampa.Utils.hash((movie.original_title || title) + '|' + name + '|' + (isTv ? (season+':'+episode) : ''));
       var view = Lampa.Timeline.view(hash);
@@ -157,13 +176,14 @@
           quality: false,
           subtitles: el.subtitles,
           timeline: el.timeline,
-          title: title + ' / ' + name
+          title: title + ' / ' + name + (isTv ? ' / S' + season + 'E' + episode : '')
         });
       });
       scroll.append(item);
     }
 
     function sourceDone() {
+      if (!active()) return;
       done++;
       if (done < total) return;
       if (!added) {
@@ -177,7 +197,113 @@
       }
     }
 
-    function runA() {
+    function seasonCount() {
+      if (movie.number_of_seasons) return parseInt(movie.number_of_seasons, 10);
+      if (Array.isArray(movie.seasons)) return movie.seasons.length;
+      return 1;
+    }
+
+    // Load the list of episodes for a season from TMDB.
+    function loadEpisodes(s, cb) {
+      var tmdb = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb;
+      if (tmdb && tmdb.get) {
+        tmdb.get('tv/' + movie.id + '/season/' + s, {}, function (data) {
+          cb((data && data.episodes) || []);
+        }, function () {
+          cb([]);
+        });
+      } else {
+        cb([]);
+      }
+    }
+
+    function refresh() {
+      self._token = ++runToken;   // any in-flight request is now stale
+      done = 0;
+      added = 0;
+      scroll.clear();
+      if (self.activity) self.activity.loader(true);
+      renderSelectors();
+      runA();
+    }
+
+    function chooseSeason() {
+      var items = [];
+      var totalSeasons = seasonCount() || 1;
+      for (var i = 1; i <= totalSeasons; i++) {
+        items.push({
+          title: Lampa.Lang.translate('online_3src_season') + ' ' + i,
+          season: i,
+          selected: season === i
+        });
+      }
+      if (!items.length) return;
+      Lampa.Select.show({
+        title: Lampa.Lang.translate('online_3src_season'),
+        items: items,
+        onSelect: function (item) {
+          if (!item || !item.season) { Lampa.Select.close(); return; }
+          season = item.season;
+          episode = 1; // reset to the first episode when the season changes
+          Lampa.Select.close();
+          refresh();
+        }
+      });
+    }
+
+    function chooseEpisode() {
+      loadEpisodes(season, function (eps) {
+        var items = [];
+        if (eps && eps.length) {
+          eps.forEach(function (ep) {
+            var n = parseInt(ep.episode_number, 10);
+            if (!n) return;
+            items.push({
+              title: Lampa.Lang.translate('online_3src_episode') + ' ' + n + (ep.name ? ' — ' + ep.name : ''),
+              episode: n,
+              selected: episode === n
+            });
+          });
+        }
+        // Fallback if TMDB failed / no episode data: numeric chooser.
+        if (!items.length) {
+          for (var k = 1; k <= 24; k++) {
+            items.push({
+              title: Lampa.Lang.translate('online_3src_episode') + ' ' + k,
+              episode: k,
+              selected: episode === k
+            });
+          }
+        }
+        Lampa.Select.show({
+          title: Lampa.Lang.translate('online_3src_episode'),
+          items: items,
+          onSelect: function (item) {
+            if (!item || !item.episode) { Lampa.Select.close(); return; }
+            episode = item.episode;
+            Lampa.Select.close();
+            refresh();
+          }
+        });
+      });
+    }
+
+    function renderSelectors() {
+      if (!isTv) return;
+      var row = function (label, value, handler) {
+        var item = Lampa.Template.get('online_3src_select', {
+          label: label,
+          value: value
+        });
+        item.on('hover:enter', function () { handler(); });
+        scroll.append(item);
+      };
+      row(Lampa.Lang.translate('online_3src_season'), season, chooseSeason);
+      row(Lampa.Lang.translate('online_3src_episode'), episode, chooseEpisode);
+    }
+function runA() {
+      var token = runToken;
+      if (!active()) return;
       if (!enabled.a) return sourceDone();
       var tmdb = movie.id;
       var imdb = movie.imdb_id || '';
@@ -186,6 +312,7 @@
 
       network.clear(); network.timeout(15000);
       network["native"](U.VE + P.seed + tmdb, function (sd) {
+        if (token !== runToken) return;
         var seed = sd && sd.seed;
         if (!seed) { dbg('a: no seed'); return sourceDone(); }
         var servers = [
@@ -194,6 +321,7 @@
         ];
         var i = 0;
         (function next() {
+          if (token !== runToken) return;
           if (i >= servers.length) { dbg('a: no stream'); return sourceDone(); }
           var nm = servers[i][0], base = servers[i][1]; i++;
           var url = base
@@ -207,6 +335,7 @@
 
           network.clear(); network.timeout(15000);
           network["native"](url, function (enc) {
+            if (token !== runToken) return;
             if (!enc || enc.length < 20 || enc.charAt(0) === '<') return next();
             try {
               var data = JSON.parse(decryptPayload(enc, seed, String(tmdb)));
@@ -216,7 +345,7 @@
                 .filter(function (s) { return s && s.url; })
                 .map(function (s, k) { return { label: s.label || s.lang || ('Sub ' + (k + 1)), url: s.url }; });
               if (playlist && playlist.indexOf('.m3u8') !== -1) {
-                dbg('a: ok');
+                dbg('a: ok', isTv ? ('S' + season + 'E' + episode) : '');
                 addStream(nm, playlist, subs);
                 return sourceDone();
               }
@@ -228,6 +357,7 @@
     }
 
     this.create = function () {
+      self._token = runToken;
       if (self.activity) self.activity.loader(true);
       files.appendFiles(scroll.render());
       this.render();
@@ -237,9 +367,11 @@
         if (empty && empty.length) empty.find('.empty__descr').text(Lampa.Lang.translate('online_3src_empty'));
         scroll.append(empty);
         if (self.activity) self.activity.loader(false);
-      } else {
-        runA();
+        return this.render();
       }
+
+      renderSelectors();
+      runA();
       return this.render();
     };
 
@@ -271,8 +403,7 @@
       scroll.destroy();
     };
   }
-
-  function initMain() {
+function initMain() {
     resetTemplates();
     Lampa.Component.add('online_3src', component);
 
