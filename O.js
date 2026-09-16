@@ -1,32 +1,37 @@
-
 (function () {
   'use strict';
 
-  var PLUGIN_VERSION = '1.0.0';
+  var PLUGIN_VERSION = '1.0.1';
 
-  /* ------------------------------------------------------------------ *
-   * Opaque URL table — decoded on load via atob().
-   * ------------------------------------------------------------------ */
-  function _d(s) {
-    try { return atob(s); } catch (e) { return ''; }
-  }
+  function _d(s) { try { return atob(s); } catch (e) { return ''; } }
+
   var U = {
-    videasy:  _d('aHR0cHM6Ly9hcGkuc3BlZWRyYWNlbGlnaHQuY29t'),
-    vaplayer: _d('aHR0cHM6Ly9zdHJlYW1kYXRhLnZhcGxheWVyLnJ1L2FwaS5waHA='),
-    vixsrc:   _d('aHR0cHM6Ly92aXhzcmMudG8=')
+    videasy:   _d('aHR0cHM6Ly9hcGkuc3BlZWRyYWNlbGlnaHQuY29t'),
+    vaplayer:  _d('aHR0cHM6Ly9zdHJlYW1kYXRhLnZhcGxheWVyLnJ1L2FwaS5waHA='),
+    vixsrc:    _d('aHR0cHM6Ly92aXhzcmMudG8='),
+    relay:     _d('aHR0cHM6Ly9jb3JzLm5iNTU3LndvcmtlcnMuZGV2Lw=='),
+    tmdb:      _d('aHR0cHM6Ly9hcGkudGhlbW92aWVkYi5vcmcvMy8=')
   };
-  // Path fragments kept as base64 too — nothing (host or path) is plaintext.
   var P = {
-    seed:       _d('L3NlZWQ/bWVkaWFJZD0='),           // /seed?mediaId=
-    cdn:        _d('L2Nkbi9zb3VyY2VzLXdpdGgtdGl0bGU='),   // /cdn/sources-with-title
-    lamovie:    _d('L2xhbW92aWUvc291cmNlcy13aXRoLXRpdGxl'), // /lamovie/sources-with-title
-    apiTv:      _d('L2FwaS90di8='),                   // /api/tv/
-    apiMovie:   _d('L2FwaS9tb3ZpZS8=')                // /api/movie/
+    seed:     _d('L3NlZWQ/bWVkaWFJZD0='),
+    cdn:      _d('L2Nkbi9zb3VyY2VzLXdpdGgtdGl0bGU='),
+    lamovie:  _d('L2xhbW92aWUvc291cmNlcy13aXRoLXRpdGxl'),
+    apiTv:    _d('L2FwaS90di8='),
+    apiMovie: _d('L2FwaS9tb3ZpZS8=')
   };
+  var TMDB_KEY = _d('NGVmMGQ3MzU1ZDlmZmI1MTUxZTk4Nzc2NDcwOGNlOTY=');
+
+  function relay(url) {
+    if (!url) return url;
+    var pos = url.indexOf('/');
+    if (pos !== -1 && url.charAt(pos + 1) === '/') pos++;
+    var part1 = pos !== -1 ? url.substring(0, pos + 1) : '';
+    var part2 = pos !== -1 ? url.substring(pos + 1) : url;
+    return U.relay + 'enc/' + encodeURIComponent(btoa(part1)) + '/' + part2;
+  }
 
   if (typeof window === 'undefined' || typeof Lampa === 'undefined') return;
 
-  /* --------------------------- i18n (English) --------------------------- */
   function initLang() {
     Lampa.Lang.add({
       online_3src_title:     { en: 'Online (3src)' },
@@ -35,22 +40,28 @@
       online_3src_noresults: { en: 'No results for this title' },
       online_3src_season:    { en: 'Default season' },
       online_3src_episode:   { en: 'Default episode' },
-      online_3src_nolink:    { en: 'Failed to fetch link' }
+      online_3src_nolink:    { en: 'Failed to fetch link' },
+      online_3src_debug:     { en: 'Show debug messages' }
     });
   }
 
-  /* --------------------------- storage defaults --------------------------- */
   function initStorage() {
     if (Lampa.Params && Lampa.Params.trigger) {
       Lampa.Params.trigger('online_3src_videasy',  true);
       Lampa.Params.trigger('online_3src_vaplayer', true);
       Lampa.Params.trigger('online_3src_vixsrc',   true);
+      Lampa.Params.trigger('online_3src_debug',    false);
       Lampa.Params.select('online_3src_season',  '', '');
       Lampa.Params.select('online_3src_episode', '', '');
     }
   }
 
-  /* --------------------------- templates --------------------------- */
+  function dbg() {
+    if (Lampa.Storage.field('online_3src_debug') === true && window.console) {
+      try { console.log.apply(console, ['[online_3src]'].concat([].slice.call(arguments))); } catch (e) {}
+    }
+  }
+
   function resetTemplates() {
     Lampa.Template.add('online_3src_item',
       '<div class="online selector">' +
@@ -67,7 +78,6 @@
       '</div>');
   }
 
-  /* --------------------------- Videasy decrypt --------------------------- */
   var MAGIC = [109, 118, 109, 49];
   var HASH_TABLE = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580];
   function u32x(x){return x>>>0}
@@ -128,7 +138,20 @@
     return toUtf8(data.subarray(MAGIC.length));
   }
 
-  /* --------------------------- component --------------------------- */
+  function fetchImdbId(movie, cb) {
+    if (movie.imdb_id) return cb(movie.imdb_id);
+    if (movie.source !== 'tmdb' && movie.source !== 'cub') return cb(null);
+    var kind = (movie.name || movie.first_air_date) ? 'tv' : 'movie';
+    var url = U.tmdb + kind + '/' + movie.id + '/external_ids?api_key=' + TMDB_KEY + '&language=en';
+    var net = new Lampa.Reguest();
+    net.timeout(8000);
+    net.silent(url, function (j) {
+      var id = j && j.imdb_id || null;
+      if (id) movie.imdb_id = id;
+      cb(id);
+    }, function () { cb(null); });
+  }
+
   function component(object) {
     var self    = this;
     var network = new Lampa.Reguest();
@@ -196,25 +219,24 @@
       }
     }
 
-    /* -------------------- Videasy -------------------- */
     function srcVideasy() {
       if (!enabled.videasy) return sourceDone();
       var tmdb = movie.id;
       var imdb = movie.imdb_id || '';
       var year = String(movie.release_date || movie.first_air_date || '').slice(0, 4);
-      if (!tmdb) return sourceDone();
+      if (!tmdb) { dbg('videasy: no tmdb id'); return sourceDone(); }
 
       network.clear(); network.timeout(15000);
       network.silent(U.videasy + P.seed + tmdb, function (sd) {
         var seed = sd && sd.seed;
-        if (!seed) return sourceDone();
+        if (!seed) { dbg('videasy: no seed'); return sourceDone(); }
         var servers = [
           ['Videasy CDN',     U.videasy + P.cdn],
           ['Videasy LaMovie', U.videasy + P.lamovie]
         ];
         var i = 0;
         (function next() {
-          if (i >= servers.length) return sourceDone();
+          if (i >= servers.length) { dbg('videasy: no stream from any server'); return sourceDone(); }
           var nm = servers[i][0], base = servers[i][1]; i++;
           var url = base
             + '?title='     + encodeURIComponent(title)
@@ -236,6 +258,205 @@
                 .filter(function (s) { return s && s.url; })
                 .map(function (s, k) { return { label: s.label || s.lang || ('Sub ' + (k + 1)), url: s.url }; });
               if (playlist && playlist.indexOf('.m3u8') !== -1) {
+                dbg('videasy: ok -', nm);
+                addStream(nm, playlist, subs);
+                return sourceDone();
+              }
+            } catch (e) { dbg('videasy: decrypt failed', e && e.message); }
+            next();
+          }, function (a) { dbg('videasy: http error', a && a.status); next(); }, false, { dataType: 'text' });
+        })();
+      }, function (a) { dbg('videasy: seed request failed', a && a.status); sourceDone(); });
+    }
+
+    function srcVAPlayer() {
+      if (!enabled.vaplayer) return sourceDone();
+      fetchImdbId(movie, function (imdb) {
+        if (!imdb) { dbg('vaplayer: no imdb id available'); return sourceDone(); }
+        var q = 'imdb=' + encodeURIComponent(imdb) + '&type=' + (isTv ? 'tv' : 'movie');
+        if (isTv) q += '&season=' + season + '&episode=' + episode;
+        var url = U.vaplayer + '?' + q;
+
+        network.clear(); network.timeout(15000);
+        network.silent(relay(url), function (json) {
+          var urls = json && json.data ? json.data.stream_urls : null;
+          if (!(Array.isArray(urls) && urls.length)) { dbg('vaplayer: no stream_urls in response'); return sourceDone(); }
+          var subs = (Array.isArray(json.default_subs) ? json.default_subs : [])
+            .map(function (s, k) {
+              return { label: s.label || s.language || s.lang || ('Sub ' + (k + 1)), url: s.url || s.src || s };
+            })
+            .filter(function (s) { return s.url; });
+          dbg('vaplayer: ok');
+          addStream('VAPlayer', urls[0], subs);
+          sourceDone();
+        }, function (a) { dbg('vaplayer: relay request failed', a && a.status); sourceDone(); });
+      });
+    }
+
+    function srcVixSrc() {
+      if (!enabled.vixsrc) return sourceDone();
+      var tmdb = movie.id;
+      if (!tmdb) { dbg('vixsrc: no tmdb id'); return sourceDone(); }
+      var api = isTv
+        ? U.vixsrc + P.apiTv    + tmdb + '/' + season + '/' + episode
+        : U.vixsrc + P.apiMovie + tmdb;
+
+      network.clear(); network.timeout(15000);
+      network.silent(relay(api), function (d) {
+        if (!d || !d.src) { dbg('vixsrc: no embed src'); return sourceDone(); }
+        var htmlUrl = relay(U.vixsrc + d.src);
+        network.clear(); network.timeout(15000);
+        network["native"](htmlUrl, function (html) {
+          function pick(re) { var m = html.match(re); return m ? m[1] : null; }
+          var token    = pick(/token["']\s*:\s*["']([^"']+)/);
+          var expires  = pick(/expires["']\s*:\s*["']([^"']+)/);
+          var playlist = pick(/url\s*:\s*["']([^"']+)/);
+          if (!(token && expires && playlist)) { dbg('vixsrc: embed parse failed'); return sourceDone(); }
+          var sep = playlist.indexOf('?') !== -1 ? '&' : '?';
+          dbg('vixsrc: ok');
+          addStream('VixSrc', playlist + sep + 'token=' + token + '&expires=' + expires + '&h=1', null);
+          sourceDone();
+        }, function (a) { dbg('vixsrc: embed fetch failed', a && a.status); sourceDone(); }, false, { dataType: 'text' });
+      }, function (a) { dbg('vixsrc: api request failed', a && a.status); sourceDone(); });
+    }
+
+    this.create = function () {
+      if (self.activity) self.activity.loader(true);
+      files.appendFiles(scroll.render());
+      this.render();
+
+      if (total === 0) {
+        var empty = Lampa.Template.get('list_empty');
+        if (empty && empty.length) empty.find('.empty__descr').text(Lampa.Lang.translate('online_3src_empty'));
+        scroll.append(empty);
+        if (self.activity) self.activity.loader(false);
+      } else {
+        srcVideasy();
+        srcVAPlayer();
+        srcVixSrc();
+      }
+      return this.render();
+    };
+
+    this.start = function () {
+      Lampa.Controller.add('content', {
+        toggle: function () {
+          Lampa.Controller.collectionSet(scroll.render(), files.render());
+          Lampa.Controller.collectionFocus(false, scroll.render());
+        },
+        up:    function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
+        down:  function () { Navigator.move('down'); },
+        left:  function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('menu'); },
+        right: function () { if (Navigator.canmove('right')) Navigator.move('right'); },
+        back:  function () { self.back(); }
+      });
+      if (Lampa.Background && Lampa.Utils && Lampa.Utils.cardImgBackground) {
+        try { Lampa.Background.immediately(Lampa.Utils.cardImgBackground(movie)); } catch (e) {}
+      }
+      Lampa.Controller.toggle('content');
+    };
+
+    this.render  = function () { return files.render(); };
+    this.back    = function () { Lampa.Activity.backward(); };
+    this.pause   = function () {};
+    this.stop    = function () {};
+    this.destroy = function () {
+      network.clear();
+      files.destroy();
+      scroll.destroy();
+    };
+  }
+
+  function initMain() {
+    resetTemplates();
+    Lampa.Component.add('online_3src', component);
+
+    var button = '<div class="full-start__button selector view--online_3src" data-subtitle="online_3src">' +
+      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 244 260" style="enable-background:new 0 0 512 512">' +
+        '<path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z" fill="currentColor"/>' +
+      '</svg><span>#{online_3src_title}</span></div>';
+
+    Lampa.Listener.follow('full', function (e) {
+      if (e.type !== 'complite') return;
+      var container = e.object.activity.render();
+      if (container.find('.view--online_3src').length) return;
+      var btn = $(Lampa.Lang.translate(button));
+      btn.on('hover:enter', function () {
+        var m = e.data.movie;
+        Lampa.Activity.push({
+          url: '',
+          title: Lampa.Lang.translate('online_3src_title'),
+          component: 'online_3src',
+          search: m.title || m.name,
+          movie: m,
+          page: 1
+        });
+      });
+      var anchor = container.find('.view--torrent');
+      if (anchor.length) anchor.after(btn);
+      else container.find('.full-start__buttons').append(btn);
+    });
+  }
+
+  function initSettings() {
+    Lampa.Template.add('settings_online_3src',
+      '<div>' +
+        '<div class="settings-param selector" data-name="online_3src_videasy"  data-type="toggle">' +
+          '<div class="settings-param__name">Videasy</div><div class="settings-param__value"></div>' +
+        '</div>' +
+        '<div class="settings-param selector" data-name="online_3src_vaplayer" data-type="toggle">' +
+          '<div class="settings-param__name">VAPlayer</div><div class="settings-param__value"></div>' +
+        '</div>' +
+        '<div class="settings-param selector" data-name="online_3src_vixsrc"   data-type="toggle">' +
+          '<div class="settings-param__name">VixSrc</div><div class="settings-param__value"></div>' +
+        '</div>' +
+        '<div class="settings-param selector" data-name="online_3src_season"  data-type="input" placeholder="1">' +
+          '<div class="settings-param__name">#{online_3src_season}</div><div class="settings-param__value"></div>' +
+        '</div>' +
+        '<div class="settings-param selector" data-name="online_3src_episode" data-type="input" placeholder="1">' +
+          '<div class="settings-param__name">#{online_3src_episode}</div><div class="settings-param__value"></div>' +
+        '</div>' +
+        '<div class="settings-param selector" data-name="online_3src_debug"   data-type="toggle">' +
+          '<div class="settings-param__name">#{online_3src_debug}</div><div class="settings-param__value"></div>' +
+        '</div>' +
+      '</div>');
+
+    function addFolder() {
+      if (!Lampa.Settings || !Lampa.Settings.main || !Lampa.Settings.main()) return;
+      var body = Lampa.Settings.main().render();
+      if (!body || !body.length) return;
+      if (body.find('[data-component="online_3src"]').length) return;
+
+      var field = $('<div class="settings-folder selector" data-component="online_3src">' +
+        '<div class="settings-folder__icon">' +
+          '<svg height="260" viewBox="0 0 244 260" fill="none">' +
+            '<path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z" fill="white"/>' +
+          '</svg>' +
+        '</div>' +
+        '<div class="settings-folder__name">' + Lampa.Lang.translate('online_3src_settings') + '</div>' +
+      '</div>');
+
+      var anchor = body.find('[data-component="more"]');
+      if (anchor.length) anchor.after(field);
+      else body.append(field);
+      Lampa.Settings.main().update();
+    }
+
+    if (window.appready) addFolder();
+    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') addFolder(); });
+  }
+
+  function startPlugin() {
+    initLang();
+    initStorage();
+    initMain();
+    initSettings();
+  }
+
+  if (window.appready) startPlugin();
+  else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') startPlugin(); });
+
+})();== -1) {
                 addStream(nm, playlist, subs);
                 return sourceDone();
               }
