@@ -1,184 +1,245 @@
 (function () {
   'use strict';
 
-  function _d(s) { try { return atob(s); } catch (e) { return ''; } }
-
-  var U = {
-    VE: _d('aHR0cHM6Ly9hcGkuc3BlZWRyYWNlbGlnaHQuY29t')
-  };
-  var P = {
-    seed:    _d('L3NlZWQ/bWVkaWFJZD0='),
-    cdn:     _d('L2Nkbi9zb3VyY2VzLXdpdGgtdGl0bGU='),
-    lamovie: _d('L2xhbW92aWUvc291cmNlcy13aXRoLXRpdGxl')
-  };
-
   if (typeof window === 'undefined' || typeof Lampa === 'undefined') return;
 
-  function initLang() {
-    Lampa.Lang.add({
-      online_nova_title:     { en: 'Nova', ru: 'Nova' },
-      online_nova_settings:  { en: 'Nova', ru: 'Nova' },
-      online_nova_subtitle:  { en: 'Instant streams', ru: 'Мгновенный стриминг' },
-      online_nova_empty:     { en: 'No available sources', ru: 'Нет доступных источников' },
-      online_nova_noresults: { en: 'No results for this title', ru: 'Нет результатов по этому тайтлу' },
-      online_nova_debug:     { en: 'Show debug messages', ru: 'Показывать отладочные сообщения' },
-      online_nova_src_a:     { en: 'Source A', ru: 'Источник A' },
-      online_nova_season:    { en: 'Season', ru: 'Сезон' },
-      online_nova_episode:   { en: 'Episode', ru: 'Серия' }
+  function _d(b64) {
+    var bin = atob(b64), out = new Uint8Array(bin.length), i;
+    for (i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(out);
+  }
+
+  var K = {
+    h:   'aHR0cHM6Ly9kYXRhLnZpZHNyYy5zaA==',
+    api: 'L2FwaS5waHA/',
+    su:  'JnN0cmVhbV91cmxz',
+    se:  'JnNlYXNvbj0=',
+    ep:  'JmVwaXNvZGU9',
+    tk:  'JHRva2VuPQ==',
+    tok: 'L2dlbmVyYXRlLnBocA==',
+    t:   'dHlwZT0=',
+    d:   'ZGF0YQ==',
+    s:   'c3RyZWFtX3VybHM=',
+    vs:  'dnM=',
+    w:   'd2FzbV91cmw=',
+    j:   'ZXlK',
+    m:   'JnRtZGI9',
+    js:  'YXBwbGljYXRpb24vanNvbg==',
+    tp:  'dGV4dC9wbGFpbg=='
+  };
+
+  var HOSTS = { api: _d(K.h) };
+  var DBGKEY = 'pl_debug';
+
+  var TIME = { api: 15000, wasm: 20000, token: 15000 };
+  var TOK_TTL = 3600 * 1000;
+  var RETRIES = 3;
+
+  var WASM = { inst: null, ready: null };
+
+  function dbg() {
+    if (Lampa.Storage.field(DBGKEY) !== true) return;
+    if (!window.console) return;
+    try { console.log.apply(console, ['[pl]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+
+  function b64ToBytes(b64) {
+    var s = String(b64).replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    var bin = atob(s);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function bytesToUtf8(bytes) {
+    if (typeof TextDecoder !== 'undefined') {
+      try { return new TextDecoder('utf-8').decode(bytes); } catch (e) {}
+    }
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    try { return decodeURIComponent(escape(s)); } catch (e) { return s; }
+  }
+
+  function originOf(url) {
+    var m = /^([a-z]+:\/\/[^/]+)/i.exec(url);
+    return m ? m[1] : '';
+  }
+
+  function getText(url, opts) {
+    opts = opts || {};
+    var tries = opts.retries == null ? RETRIES : opts.retries;
+    var attempt = 0;
+
+    function once(resolve, reject) {
+      var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      var timer = ctl ? setTimeout(function () { ctl.abort(); }, opts.timeout || TIME.api) : null;
+
+      var init = { method: 'GET', mode: 'cors', credentials: 'omit' };
+      if (ctl) init.signal = ctl.signal;
+      init.headers = { 'Accept': opts.accept || 'application/json' };
+      if (opts.referer) init.referrer = opts.referer;
+
+      fetch(url, init).then(function (res) {
+        if (timer) clearTimeout(timer);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.text();
+      }).then(resolve, function (err) {
+        if (timer) clearTimeout(timer);
+        attempt++;
+        var hard = err && /HTTP 4(?!29)/.test(err.message || '');
+        if (attempt >= tries || hard) return reject(err);
+        setTimeout(function () { once(resolve, reject); }, 800 * attempt);
+      });
+    }
+
+    return new Promise(once);
+  }
+
+  function getBinary(url) {
+    return fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit' })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.arrayBuffer();
+      });
+  }
+
+
+  function loadWasm(url) {
+    if (WASM.ready) return WASM.ready;
+
+    WASM.ready = getBinary(url)
+      .then(function (buf) { return WebAssembly.instantiate(buf, {}); })
+      .then(function (res) {
+        var inst = res.instance || res;
+        var ex = inst.exports;
+        if (!ex || !ex.alloc || !ex.decrypt || !ex.memory) {
+          throw new Error('bad module');
+        }
+        WASM.inst = inst;
+        dbg('ready');
+        return inst;
+      })
+      .catch(function (err) {
+        WASM.ready = null;
+        throw err;
+      });
+
+    return WASM.ready;
+  }
+
+  function decrypt(cipherB64, wasmUrl) {
+    return loadWasm(wasmUrl).then(function (inst) {
+      var ex = inst.exports;
+      var data = b64ToBytes(cipherB64);
+
+      var ptr = ex.alloc(data.length);
+      new Uint8Array(ex.memory.buffer, ptr, data.length).set(data);
+
+      var outLen = ex.decrypt(ptr, data.length);
+      var raw = new Uint8Array(ex.memory.buffer, ptr + 12, outLen);
+
+      return bytesToUtf8(raw).split('\n')
+        .map(function (l) { return l.trim(); })
+        .filter(function (l) { return l.length > 0; });
     });
   }
 
-  function initStorage() {
-    if (Lampa.Params && Lampa.Params.trigger) {
-      Lampa.Params.trigger('online_nova_a', true);
-      Lampa.Params.trigger('online_nova_debug', false);
-    }
+
+  var tokenCache = {};
+
+  function getToken(origin) {
+    var hit = tokenCache[origin];
+    if (hit && (Date.now() - hit.ts) < TOK_TTL) return Promise.resolve(hit.token);
+
+    return getText(origin + _d(K.tok), {
+      accept: _d(K.tp),
+      timeout: TIME.token,
+      referer: origin + '/'
+    }).then(function (txt) {
+      txt = (txt || '').trim();
+      if (txt.indexOf(_d(K.j)) !== 0) throw new Error('bad token');
+      tokenCache[origin] = { token: txt, ts: Date.now() };
+      dbg('token ok');
+      return txt;
+    }).catch(function (err) {
+      if (hit) return hit.token;
+      throw err;
+    });
   }
 
-  function dbg() {
-    if (Lampa.Storage.field('online_nova_debug') === true && window.console) {
-      try { console.log.apply(console, ['[Nova]'].concat([].slice.call(arguments))); } catch (e) {}
-    }
+
+  function resolve(tmdb, isTv, season, episode) {
+    var q = _d(K.t) + (isTv ? 'tv' : 'movie') + _d(K.m) + tmdb + _d(K.su);
+    if (isTv) q += _d(K.se) + season + _d(K.ep) + episode;
+
+    var apiUrl = HOSTS.api + _d(K.api) + q;
+    dbg('req');
+
+    return getText(apiUrl, { accept: _d(K.js), timeout: TIME.api })
+      .then(function (body) {
+        var payload;
+        try { payload = JSON.parse(body); }
+        catch (e) { throw new Error('bad json'); }
+
+        var blob = payload && payload[_d(K.d)] && payload[_d(K.d)][_d(K.s)];
+        var wasmUrl = payload && payload[_d(K.vs)] && payload[_d(K.vs)][_d(K.w)];
+        if (!blob || !wasmUrl) throw new Error('no data');
+        return decrypt(blob, wasmUrl);
+      })
+      .then(function (urls) {
+        if (!urls || !urls.length) throw new Error('no results');
+        dbg('got', urls.length);
+        return getToken(originOf(urls[0])).then(function (token) {
+          return urls.map(function (u, i) {
+            var sep = u.indexOf('?') === -1 ? '?' : '&';
+            return { url: u + sep + _d(K.tk) + token, index: i };
+          });
+        });
+      });
   }
 
-  function resetTemplates() {
-    Lampa.Template.add('online_nova_item',
-      '<div class="online selector">' +
-        '<div class="online__body">' +
-          '<div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">' +
-            '<svg style="height:2.4em;width:2.4em" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-              '<circle cx="64" cy="64" r="56" stroke="white" stroke-width="16"/>' +
-              '<path d="M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z" fill="white"/>' +
-            '</svg>' +
-          '</div>' +
-          '<div class="online__title" style="padding-left:2.1em">{title}</div>' +
-          '<div class="online__quality" style="padding-left:3.4em">{quality}{info}</div>' +
-        '</div>' +
-      '</div>');
+  Lampa.Pl = {
+    resolve: resolve,
+    getToken: getToken,
+    clearTokens: function () { tokenCache = {}; }
+  };
 
-    Lampa.Template.add('online_nova_select',
-      '<div class="online nova-select selector">' +
-        '<div class="online__body nova-select__body" style="display:flex;align-items:center;justify-content:space-between;gap:.9em;margin:.18em 0;padding:.6em .9em .6em 2.5em;background:rgba(60,140,255,.10);border:1px solid rgba(120,170,255,.28);border-radius:1.1em;position:relative">' +
-          '<div style="position:absolute;left:.75em;top:50%;transform:translateY(-50%);width:1.25em;height:1.25em;color:#8FD0FF">{icon}</div>' +
-          '<div style="font-size:1.04em;color:#f2f4f7;letter-spacing:.02em">{label}</div>' +
-          '<div style="display:flex;align-items:center;gap:.45em;background:linear-gradient(135deg,#7DC6FF,#4C97FF);color:#07223a;font-weight:800;border-radius:.85em;padding:.3em .9em;font-size:1.12em;box-shadow:0 2px 8px rgba(70,130,255,.35)">' +
-            '{value}<span style="opacity:.6;transform:translateY(-.05em)">&#8250;</span>' +
-          '</div>' +
-        '</div>' +
-      '</div>');
-  }
-var MAGIC = [109, 118, 109, 49];
-  var HASH_TABLE = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580];
-  function u32x(x){return x>>>0}
-  function mul32(a,b){return Math.imul(a,b)>>>0}
-  function rotl32(x,n){x>>>=0;n&=31;return n===0?x:((x<<n)|(x>>>(32-n)))>>>0}
-  function hash32(x){x=u32x(x);x^=x>>>16;x=mul32(x,2246822507);x^=x>>>13;x=mul32(x,3266489909);x^=x>>>16;return u32x(x)}
-  function fnv1a(s){var h=2166136261;for(var i=0;i<s.length;i++)h=mul32(h^s.charCodeAt(i),16777619);return hash32(h)}
-  function initStream(seed,sk){
-    var S=new Array(61);
-    var a=u32x(hash32(fnv1a(seed)^hash32(u32x((sk>>>0)^2654435769))));
-    for(var i=0;i<8;i++){
-      if(((i*(i+1))&1)===0){
-        var idx=a%61;
-        a=rotl32(a+u32x(2654435769),7+(7&i));
-        S[idx]=u32x(a^hash32(a));
-        a=hash32(u32x(a+idx));
-      } else { S[i]=HASH_TABLE[15&i]; }
-    }
-    return {S:S,acc:u32x(hash32(2779096485^a))};
-  }
-  function nextByte(st,ctr){
-    var r=st.S,o=st.acc,n=o%61;
-    var inSet=0-Number(n in r);
-    var d=r[n]>>>0;
-    var x=u32x(d^mul32(2654435769,ctr+1));
-    var y=u32x((o^x)|(o&x&inSet));
-    var no=hash32(u32x(rotl32(u32x(y+o),31&n)^rotl32(o,31&Math.imul(n,7)))+2654435769);
-    r[n]=no>>>0;st.acc=no;return no>>>0;
-  }
-  function keystream(seed,sk,len){
-    var st=initStream(seed,sk),out=new Uint8Array(len),ctr=0;
-    for(var i=0;i<len;){
-      var b=nextByte(st,ctr++);
-      out[i++]=255&b;
-      if(i<len) out[i++]=(b>>>8)&255;
-      if(i<len) out[i++]=(b>>>16)&255;
-      if(i<len) out[i++]=(b>>>24)&255;
-    }
-    return out;
-  }
-  function b64Bytes(b64){
-    var s=String(b64).replace(/-/g,'+').replace(/_/g,'/');
-    while(s.length%4) s+='=';
-    var bin=atob(s),out=new Uint8Array(bin.length);
-    for(var i=0;i<bin.length;i++) out[i]=bin.charCodeAt(i);
-    return out;
-  }
-  function toUtf8(bytes){
-    if(typeof TextDecoder!=='undefined'){try{return new TextDecoder('utf-8').decode(bytes)}catch(e){}}
-    var s='';for(var i=0;i<bytes.length;i++)s+=String.fromCharCode(bytes[i]);
-    try{return decodeURIComponent(escape(s))}catch(e){return s}
-  }
-  function decryptPayload(payload,seed,sk){
-    var data=b64Bytes(payload);
-    var ks=keystream(seed,sk,data.length);
-    for(var i=0;i<data.length;i++) data[i]^=ks[i];
-    for(var j=0;j<MAGIC.length;j++) if(data[j]!==MAGIC[j]) throw new Error('bad payload');
-    return toUtf8(data.subarray(MAGIC.length));
-  }
-function component(object) {
+
+  function component(object) {
     var self    = this;
-    var network = new Lampa.Reguest();
     var scroll  = new Lampa.Scroll({ mask: true, over: true });
     var files   = new Lampa.Explorer(object);
 
-    var movie   = object.movie || object;
-    var title   = object.search || movie.title || movie.name || '';
-    var isTv    = !!(movie.number_of_seasons || movie.first_air_date || movie.name);
+    var movie = object.movie || object;
+    var title = object.search || movie.title || movie.name || '';
+    var isTv  = !!(movie.number_of_seasons || movie.first_air_date || movie.name);
 
-    // NOTE: do NOT hard-code to 1. Default to the last season (Lampa convention)
-    // and let the user change season/episode via the in-component selector.
-    var lastSE  = movie.last_episode_to_air || {};
-    var season  = parseInt((object.season || movie.number_of_seasons || lastSE.season_number || 1), 10) || 1;
+    var lastSE = movie.last_episode_to_air || {};
+    var season  = parseInt((object.season  || movie.number_of_seasons || lastSE.season_number  || 1), 10) || 1;
     var episode = parseInt((object.episode || lastSE.episode_number || 1), 10) || 1;
 
-    // Guards against stale async responses when the user switches S/E mid-request.
     var runToken = 0;
+    var added = 0;
 
-    var enabled = {
-      a: Lampa.Storage.field('online_nova_a') === true
-    };
-    var total = (enabled.a?1:0);
-    var done = 0, added = 0;
+    scroll.body().addClass('pl-list');
 
-    scroll.body().addClass('torrent-list');
+    function active() { return self._token === runToken; }
 
-    function active() {
-      return self._token === runToken;
-    }
-
-    function addStream(name, url, subs) {
+    function addStream(name, url) {
       if (!active()) return;
       added++;
-      var hash = Lampa.Utils.hash((movie.original_title || title) + '|' + name + '|' + (isTv ? (season+':'+episode) : ''));
-      var view = Lampa.Timeline.view(hash);
-      var el = {
-        title: name,
-        quality: '360p ~ 1080p',
-        info: (subs && subs.length) ? ' / ' + subs.length + ' subs' : '',
-        stream: url,
-        subtitles: (subs && subs.length) ? subs : false,
-        timeline: view
-      };
-      var item = Lampa.Template.get('online_nova_item', el);
+      var key = (movie.original_title || title) + '|' + name + '|' +
+                (isTv ? (season + ':' + episode) : '');
+      var view = Lampa.Timeline.view(Lampa.Utils.hash(key));
+      var el = { title: name, quality: 'auto', info: '', stream: url, timeline: view };
+      var item = Lampa.Template.get('pl_item', el);
       item.append(Lampa.Timeline.render(view));
-
       item.on('hover:enter', function () {
         if (movie.id) Lampa.Favorite.add('history', movie, 100);
         Lampa.Player.play({
           url: el.stream,
           quality: false,
-          subtitles: el.subtitles,
           timeline: el.timeline,
           title: title + ' / ' + name + (isTv ? ' / S' + season + 'E' + episode : '')
         });
@@ -188,17 +249,15 @@ function component(object) {
 
     function sourceDone() {
       if (!active()) return;
-      done++;
-      if (done < total) return;
       if (!added) {
         var empty = Lampa.Template.get('list_empty');
-        if (empty && empty.length) empty.find('.empty__descr').text(Lampa.Lang.translate('online_nova_noresults'));
-        scroll.append(empty);
+        if (empty && empty.length) {
+          empty.find('.empty__descr').text(Lampa.Lang.translate('pl_noresults'));
+          scroll.append(empty);
+        }
       }
-      if (self.activity) {
-        self.activity.loader(false);
-        Lampa.Controller.toggle('content');
-      }
+      if (self.activity) self.activity.loader(false);
+      Lampa.Controller.toggle('content');
     }
 
     function seasonCount() {
@@ -207,28 +266,22 @@ function component(object) {
       return 1;
     }
 
-    // Load the list of episodes for a season from TMDB.
     function loadEpisodes(s, cb) {
-      var tmdb = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb;
-      if (tmdb && tmdb.get) {
-        tmdb.get('tv/' + movie.id + '/season/' + s, {}, function (data) {
+      var api = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb;
+      if (api && api.get) {
+        api.get('tv/' + movie.id + '/season/' + s, {}, function (data) {
           cb((data && data.episodes) || []);
-        }, function () {
-          cb([]);
-        });
-      } else {
-        cb([]);
-      }
+        }, function () { cb([]); });
+      } else cb([]);
     }
 
     function refresh() {
-      self._token = ++runToken;   // any in-flight request is now stale
-      done = 0;
+      self._token = ++runToken;
       added = 0;
       scroll.clear();
       if (self.activity) self.activity.loader(true);
       renderSelectors();
-      runA();
+      run();
     }
 
     function chooseSeason() {
@@ -236,19 +289,19 @@ function component(object) {
       var totalSeasons = seasonCount() || 1;
       for (var i = 1; i <= totalSeasons; i++) {
         items.push({
-          title: Lampa.Lang.translate('online_nova_season') + ' ' + i,
+          title: Lampa.Lang.translate('pl_season') + ' ' + i,
           season: i,
           selected: season === i
         });
       }
       if (!items.length) return;
       Lampa.Select.show({
-        title: Lampa.Lang.translate('online_nova_season'),
+        title: Lampa.Lang.translate('pl_season'),
         items: items,
         onSelect: function (item) {
           if (!item || !item.season) { Lampa.Select.close(); return; }
           season = item.season;
-          episode = 1; // reset to the first episode when the season changes
+          episode = 1;
           Lampa.Select.close();
           refresh();
         }
@@ -263,24 +316,24 @@ function component(object) {
             var n = parseInt(ep.episode_number, 10);
             if (!n) return;
             items.push({
-              title: Lampa.Lang.translate('online_nova_episode') + ' ' + n + (ep.name ? ' — ' + ep.name : ''),
+              title: Lampa.Lang.translate('pl_episode') + ' ' + n + (ep.name ? ' — ' + ep.name : ''),
               episode: n,
               selected: episode === n
             });
           });
         }
-        // Fallback if TMDB failed / no episode data: numeric chooser.
+
         if (!items.length) {
           for (var k = 1; k <= 24; k++) {
             items.push({
-              title: Lampa.Lang.translate('online_nova_episode') + ' ' + k,
+              title: Lampa.Lang.translate('pl_episode') + ' ' + k,
               episode: k,
               selected: episode === k
             });
           }
         }
         Lampa.Select.show({
-          title: Lampa.Lang.translate('online_nova_episode'),
+          title: Lampa.Lang.translate('pl_episode'),
           items: items,
           onSelect: function (item) {
             if (!item || !item.episode) { Lampa.Select.close(); return; }
@@ -299,70 +352,35 @@ function component(object) {
         episode: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5z"/></svg>'
       };
       var row = function (label, value, icon, handler) {
-        var item = Lampa.Template.get('online_nova_select', {
-          label: label,
-          value: value,
-          icon: icon
-        });
+        var item = Lampa.Template.get('pl_select', { label: label, value: value, icon: icon });
         item.on('hover:enter', function () { handler(); });
         scroll.append(item);
       };
-      row(Lampa.Lang.translate('online_nova_season'), season, ICONS.season, chooseSeason);
-      row(Lampa.Lang.translate('online_nova_episode'), episode, ICONS.episode, chooseEpisode);
+      row(Lampa.Lang.translate('pl_season'), season, ICONS.season, chooseSeason);
+      row(Lampa.Lang.translate('pl_episode'), episode, ICONS.episode, chooseEpisode);
     }
-function runA() {
+
+    function run() {
       var token = runToken;
       if (!active()) return;
-      if (!enabled.a) return sourceDone();
       var tmdb = movie.id;
-      var imdb = movie.imdb_id || '';
-      var year = String(movie.release_date || movie.first_air_date || '').slice(0, 4);
-      if (!tmdb) { dbg('a: no id'); return sourceDone(); }
+      if (!tmdb) { dbg('no tmdb id'); return sourceDone(); }
 
-      network.clear(); network.timeout(15000);
-      network["native"](U.VE + P.seed + tmdb, function (sd) {
-        if (token !== runToken) return;
-        var seed = sd && sd.seed;
-        if (!seed) { dbg('a: no seed'); return sourceDone(); }
-        var servers = [
-          [Lampa.Lang.translate('online_nova_src_a'), U.VE + P.cdn],
-          [Lampa.Lang.translate('online_nova_src_a') + ' 2', U.VE + P.lamovie]
-        ];
-        var i = 0;
-        (function next() {
+      dbg('resolve', tmdb, isTv, season, episode);
+      Lampa.Pl.resolve(tmdb, isTv, season, episode)
+        .then(function (list) {
           if (token !== runToken) return;
-          if (i >= servers.length) { dbg('a: no stream'); return sourceDone(); }
-          var nm = servers[i][0], base = servers[i][1]; i++;
-          var url = base
-            + '?title='     + encodeURIComponent(title)
-            + '&mediaType=' + (isTv ? 'TV%20Series' : 'Movie')
-            + '&year='      + year
-            + '&tmdbId='    + tmdb
-            + '&imdbId='    + (imdb || '')
-            + '&enc=2&seed=' + encodeURIComponent(seed);
-          if (isTv) url += '&seasonId=' + season + '&episodeId=' + episode;
-
-          network.clear(); network.timeout(15000);
-          network["native"](url, function (enc) {
-            if (token !== runToken) return;
-            if (!enc || enc.length < 20 || enc.charAt(0) === '<') return next();
-            try {
-              var data = JSON.parse(decryptPayload(enc, seed, String(tmdb)));
-              var first = data.sources && data.sources[0];
-              var playlist = data.playlist || (first && first.url);
-              var subs = (Array.isArray(data.subtitles) ? data.subtitles : [])
-                .filter(function (s) { return s && s.url; })
-                .map(function (s, k) { return { label: s.label || s.lang || ('Sub ' + (k + 1)), url: s.url }; });
-              if (playlist && playlist.indexOf('.m3u8') !== -1) {
-                dbg('a: ok', isTv ? ('S' + season + 'E' + episode) : '');
-                addStream(nm, playlist, subs);
-                return sourceDone();
-              }
-            } catch (e) { dbg('a: decrypt fail', e && e.message); }
-            next();
-          }, function (a) { dbg('a: http', a && a.status); next(); }, false, { dataType: 'text' });
-        })();
-      }, function (a) { dbg('a: seed fail', a && a.status); sourceDone(); });
+          if (!list || !list.length) return sourceDone();
+          list.forEach(function (s) {
+            addStream(Lampa.Lang.translate('pl_source') + ' ' + (s.index + 1), s.url);
+          });
+          sourceDone();
+        })
+        .catch(function (err) {
+          if (token !== runToken) return;
+          dbg('failed', err && err.message);
+          sourceDone();
+        });
     }
 
     this.create = function () {
@@ -370,17 +388,8 @@ function runA() {
       if (self.activity) self.activity.loader(true);
       files.appendFiles(scroll.render());
       this.render();
-
-      if (total === 0) {
-        var empty = Lampa.Template.get('list_empty');
-        if (empty && empty.length) empty.find('.empty__descr').text(Lampa.Lang.translate('online_nova_empty'));
-        scroll.append(empty);
-        if (self.activity) self.activity.loader(false);
-        return this.render();
-      }
-
       renderSelectors();
-      runA();
+      run();
       return this.render();
     };
 
@@ -406,32 +415,79 @@ function runA() {
     this.back    = function () { Lampa.Activity.backward(); };
     this.pause   = function () {};
     this.stop    = function () {};
-    this.destroy = function () {
-      network.clear();
-      files.destroy();
-      scroll.destroy();
-    };
+    this.destroy = function () { files.destroy(); scroll.destroy(); };
   }
-function initMain() {
-    resetTemplates();
-    Lampa.Component.add('online_nova', component);
 
-    var button = '<div class="full-start__button selector view--online_nova" data-subtitle="online_nova">' +
+
+  function initLang() {
+    Lampa.Lang.add({
+      pl_title:     { en: 'Premium', ru: 'Premium', pt: 'Premium' },
+      pl_settings:  { en: 'Premium', ru: 'Premium', pt: 'Premium' },
+      pl_source:    { en: 'Source',  ru: 'Источник',     pt: 'Fonte' },
+      pl_subtitle:  { en: 'Instant streams', ru: 'Мгновенный стриминг', pt: 'Streams instantâneos' },
+      pl_empty:     { en: 'No available sources', ru: 'Нет доступных источников', pt: 'Nenhuma fonte disponÃvel' },
+      pl_noresults: { en: 'No results for this title', ru: 'Нет результатов по этому тайтлу', pt: 'Nenhum resultado para este tÃ­tulo' },
+      pl_debug:     { en: 'Show debug messages', ru: 'Показывать отладочные сообщения', pt: 'Mostrar mensagens de depuraÃ§Ã£o' },
+      pl_season:    { en: 'Season',  ru: 'Сезон',  pt: 'Temporada' },
+      pl_episode:   { en: 'Episode', ru: 'Серия',  pt: 'EpisÃ³dio' }
+    });
+  }
+
+  function initStorage() {
+    if (Lampa.Params && Lampa.Params.trigger) {
+      Lampa.Params.trigger('pl_debug', false);
+    }
+  }
+
+  function initTemplates() {
+    Lampa.Template.add('pl_item',
+      '<div class="online selector">' +
+        '<div class="online__body">' +
+          '<div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">' +
+            '<svg style="height:2.4em;width:2.4em" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+              '<circle cx="64" cy="64" r="56" stroke="white" stroke-width="16"/>' +
+              '<path d="M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z" fill="white"/>' +
+            '</svg>' +
+          '</div>' +
+          '<div class="online__title" style="padding-left:2.1em">{title}</div>' +
+          '<div class="online__quality" style="padding-left:2.1em">{quality}{info}</div>' +
+        '</div>' +
+      '</div>');
+
+    Lampa.Template.add('pl_select',
+      '<div class="online pl-select selector">' +
+        '<div class="online__body pl-select__body" style="display:flex;align-items:center;justify-content:space-between;gap:.9em;margin:.18em 0;padding:.6em .9em .6em 2.5em;background:rgba(60,140,255,.10);border:1px solid rgba(120,170,255,.28);border-radius:1.1em;position:relative">' +
+          '<div style="position:absolute;left:.75em;top:50%;transform:translateY(-50%);width:1.25em;height:1.25em;color:#8FD0FF">{icon}</div>' +
+          '<div style="font-size:1.04em;color:#f2f4f7;letter-spacing:.02em">{label}</div>' +
+          '<div style="display:flex;align-items:center;gap:.45em;background:linear-gradient(135deg,#7DC6FF,#4C97FF);color:#07223a;font-weight:800;border-radius:.85em;padding:.3em .9em;font-size:1.12em;box-shadow:0 2px 8px rgba(70,130,255,.35)">' +
+            '{value}<span style="opacity:.6;transform:translateY(-.05em)">&#8250;</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>');
+  }
+
+
+
+
+  function initMain() {
+    Lampa.Component.add('pl', component);
+
+    var button = '<div class="full-start__button selector view--pl" data-subtitle="pl">' +
       '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 244 260" style="enable-background:new 0 0 512 512">' +
         '<path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z" fill="currentColor"/>' +
-      '</svg><span>#{online_nova_title}</span></div>';
+      '</svg><span>#{pl_title}</span></div>';
 
     Lampa.Listener.follow('full', function (e) {
       if (e.type !== 'complite') return;
       var container = e.object.activity.render();
-      if (container.find('.view--online_nova').length) return;
+      if (container.find('.view--pl').length) return;
       var btn = $(Lampa.Lang.translate(button));
       btn.on('hover:enter', function () {
         var m = e.data.movie;
         Lampa.Activity.push({
           url: '',
-          title: Lampa.Lang.translate('online_nova_title'),
-          component: 'online_nova',
+          title: Lampa.Lang.translate('pl_title'),
+          component: 'pl',
           search: m.title || m.name,
           movie: m,
           page: 1
@@ -444,13 +500,10 @@ function initMain() {
   }
 
   function initSettings() {
-    Lampa.Template.add('settings_online_nova',
+    Lampa.Template.add('settings_pl',
       '<div>' +
-        '<div class="settings-param selector" data-name="online_nova_a" data-type="toggle">' +
-          '<div class="settings-param__name">#{online_nova_src_a}</div><div class="settings-param__value"></div>' +
-        '</div>' +
-        '<div class="settings-param selector" data-name="online_nova_debug" data-type="toggle">' +
-          '<div class="settings-param__name">#{online_nova_debug}</div><div class="settings-param__value"></div>' +
+        '<div class="settings-param selector" data-name="pl_debug" data-type="toggle">' +
+          '<div class="settings-param__name">#{pl_debug}</div><div class="settings-param__value"></div>' +
         '</div>' +
       '</div>');
 
@@ -458,15 +511,15 @@ function initMain() {
       if (!Lampa.Settings || !Lampa.Settings.main || !Lampa.Settings.main()) return;
       var body = Lampa.Settings.main().render();
       if (!body || !body.length) return;
-      if (body.find('[data-component="online_nova"]').length) return;
+      if (body.find('[data-component="pl"]').length) return;
 
-      var field = $('<div class="settings-folder selector" data-component="online_nova">' +
+      var field = $('<div class="settings-folder selector" data-component="pl">' +
         '<div class="settings-folder__icon">' +
           '<svg height="260" viewBox="0 0 244 260" fill="none">' +
             '<path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z" fill="white"/>' +
           '</svg>' +
         '</div>' +
-        '<div class="settings-folder__name">' + Lampa.Lang.translate('online_nova_settings') + '</div>' +
+        '<div class="settings-folder__name">' + Lampa.Lang.translate('pl_settings') + '</div>' +
       '</div>');
 
       var anchor = body.find('[data-component="more"]');
@@ -482,6 +535,7 @@ function initMain() {
   function startPlugin() {
     initLang();
     initStorage();
+    initTemplates();
     initMain();
     initSettings();
   }
