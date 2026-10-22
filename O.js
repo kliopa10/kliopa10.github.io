@@ -30,7 +30,7 @@
       online_nova_src_vx:     { en: 'VixSrc', ru: 'VixSrc' },
       online_nova_season:     { en: 'Season', ru: 'Сезон' },
       online_nova_episode:    { en: 'Episode', ru: 'Серия' },
-      online_nova_worker:     { en: 'Relay URL (leave empty to disable)', ru: 'URL релея (пусто — выключено)' },
+      online_nova_worker:     { en: 'Relay URL (For VAPlayer/VixSrc)', ru: 'URL релея (Для VAPlayer/VixSrc)' },
       online_nova_worker_ph:  { en: 'https://your-worker.workers.dev', ru: 'https://your-worker.workers.dev' }
     });
   }
@@ -40,7 +40,7 @@
       Lampa.Params.trigger('online_nova_v', true);
       Lampa.Params.trigger('online_nova_va', true);
       Lampa.Params.trigger('online_nova_vx', true);
-      Lampa.Params.trigger('online_nova_debug', false);
+      Lampa.Params.trigger('online_nova_debug', true);
       Lampa.Params.select('online_nova_worker', '', '');
     }
   }
@@ -89,8 +89,8 @@
       '</div>');
   }
 
-  // --- VIDEASY DECRYPT (restored from provider file) ---
-  var MAGIC = [109, 118, 109, 49]; // "mvm1"
+  // --- VIDEASY DECRYPT ---
+  var MAGIC = [109, 118, 109, 49];
   var HASH_TABLE = [1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580];
   
   function u32x(x) { return x >>> 0; }
@@ -328,7 +328,7 @@
       if (!tmdb) { dbg('v: no id'); return sourceDone(); }
 
       network.clear(); network.timeout(15000);
-      network["native"](U.VE + P.seed + tmdb, function (sd) {
+      network.silent(U.VE + P.seed + tmdb, function (sd) {
         if (token !== runToken) return;
         var seed = sd && sd.seed;
         if (!seed) { dbg('v: no seed'); return sourceDone(); }
@@ -354,7 +354,7 @@
           if (isTv) url += '&seasonId=' + season + '&episodeId=' + episode;
 
           network.clear(); network.timeout(15000);
-          network["native"](url, function (enc) {
+          network.silent(url, function (enc) {
             if (token !== runToken) return;
             if (!enc || enc.length < 20 || enc.charAt(0) === '<') return next();
             try {
@@ -373,7 +373,7 @@
             next();
           }, function (a) { dbg('v: http', a && a.status); next(); }, false, { dataType: 'text' });
         })();
-      }, function (a) { dbg('v: seed fail', a && a.status); sourceDone(); });
+      }, function (a) { dbg('v: seed fail', a && a.status); sourceDone(); }, false, { dataType: 'text' });
     }
 
     // --- VAPLAYER ---
@@ -386,19 +386,25 @@
 
       var q = 'imdb=' + encodeURIComponent(imdb) + '&type=' + (isTv ? 'tv' : 'movie');
       if (isTv) q += '&season=' + season + '&episode=' + episode;
+      var target = U.VA + '?' + q;
 
       network.clear(); network.timeout(15000);
-      network.silent(U.VA + '?' + q, function (json) {
+      network.silent(target, function (raw) {
         if (token !== runToken) return;
-        var urls = json && json.data ? json.data.stream_urls : null;
-        if (!(Array.isArray(urls) && urls.length)) { dbg('va: no streams'); return sourceDone(); }
-        var subs = (Array.isArray(json.default_subs) ? json.default_subs : [])
-          .map(function (s, k) { return { label: s.label || s.language || ('Sub ' + (k + 1)), url: s.url || s.src || s }; })
-          .filter(function (s) { return s.url; });
-        dbg('va: ok');
-        addStream(Lampa.Lang.translate('online_nova_src_va'), wrap(urls[0]), subs);
+        try {
+          var json = JSON.parse(raw);
+          var urls = json && json.data ? json.data.stream_urls : null;
+          if (!(Array.isArray(urls) && urls.length)) { dbg('va: no streams'); return sourceDone(); }
+          var subs = (Array.isArray(json.default_subs) ? json.default_subs : [])
+            .map(function (s, k) { return { label: s.label || s.language || ('Sub ' + (k + 1)), url: s.url || s.src || s }; })
+            .filter(function (s) { return s.url; });
+          dbg('va: ok');
+          addStream(Lampa.Lang.translate('online_nova_src_va'), wrap(urls[0]), subs);
+        } catch (e) {
+          dbg('va: parse fail', e.message);
+        }
         sourceDone();
-      }, function (a) { dbg('va: fail', a && a.status); sourceDone(); });
+      }, function (a) { dbg('va: fail', a && a.status); sourceDone(); }, false, { dataType: 'text' });
     }
 
     // --- VIXSRC ---
@@ -414,12 +420,14 @@
         : U.VX + P.apiMov + tmdb;
 
       network.clear(); network.timeout(15000);
-      network.silent(api, function (d) {
+      network.silent(api, function (raw) {
         if (token !== runToken) return;
+        var d;
+        try { d = JSON.parse(raw); } catch (e) { dbg('vx: parse fail', e.message); return sourceDone(); }
         if (!d || !d.src) { dbg('vx: no src'); return sourceDone(); }
 
         network.clear(); network.timeout(15000);
-        network["native"](U.VX + d.src, function (html) {
+        network.silent(U.VX + d.src, function (html) {
           if (token !== runToken) return;
           function pick(re) { var m = html.match(re); return m ? m[1] : null; }
           var tkn = pick(/token["']\s*:\s*["']([^"']+)/);
@@ -432,7 +440,7 @@
           addStream(Lampa.Lang.translate('online_nova_src_vx'), wrap(playlist + sep + 'token=' + tkn + '&expires=' + exp + '&h=1'), null);
           sourceDone();
         }, function (a) { dbg('vx: fetch fail', a && a.status); sourceDone(); }, false, { dataType: 'text' });
-      }, function (a) { dbg('vx: api fail', a && a.status); sourceDone(); });
+      }, function (a) { dbg('vx: api fail', a && a.status); sourceDone(); }, false, { dataType: 'text' });
     }
 
     function runAll() {
